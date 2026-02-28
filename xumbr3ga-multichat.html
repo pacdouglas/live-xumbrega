@@ -167,7 +167,7 @@ html,body{width:100%;height:100%;background:transparent;overflow:hidden;font-fam
 <!-- CONFIG SCREEN -->
 <div id="cfg">
   <p class="cfg-h">XUMBR3GA — MULTI CHAT</p>
-  <p class="cfg-sub">Configura uma vez. Twitch e Kick conectam sozinhos.<br>YouTube precisa de API key gratuita + ID da live.</p>
+  <p class="cfg-sub">Configura uma vez. Twitch e Kick conectam sozinhos.<br>YouTube só precisa do ID da live (muda a cada stream).</p>
 
   <!-- TWITCH -->
   <div class="cfg-section tw-sec">
@@ -191,12 +191,7 @@ html,body{width:100%;height:100%;background:transparent;overflow:hidden;font-fam
   <!-- YOUTUBE -->
   <div class="cfg-section yt-sec">
     <div class="cfg-plat yt"><span class="dot"></span>YOUTUBE</div>
-    <div class="cfg-lbl">API KEY *</div>
-    <input id="yt-key-in" class="cfg-in yt" type="password" placeholder="AIzaSy...">
-    <p class="cfg-note yt">
-      Grátis em <strong>console.cloud.google.com</strong> → APIs &amp; Services → YouTube Data API v3.<br>
-      Salva uma vez, nunca precisa repetir.
-    </p>
+    <p class="cfg-ok" style="color:rgba(255,102,102,0.8)">✓ Conecta diretamente — sem API key</p>
     <div class="cfg-lbl">VIDEO ID DA LIVE * (pega do URL da live)</div>
     <input id="yt-vid-in-cfg" class="cfg-in yt" type="text" placeholder="ex: Fpfdw0iXuv8">
     <p class="cfg-note yt">
@@ -256,12 +251,11 @@ const SVG = {
 
 // ────────────────────────── STATE ────────────────────────────────────────────
 const S = {
-  ytKey:   ls('ytKey'),
-  ytOn:    ls('ytOn') !== 'false',
-  kiId:    ls('kiId'),
-  ytChatId: null,
-  ytPage:   null,
-  ytTimer:  null,
+  ytOn:          ls('ytOn') !== 'false',
+  kiId:          ls('kiId'),
+  ytContinuation: null,
+  ytIsFirst:     true,
+  ytTimer:       null,
 };
 
 function ls(k) { try { return localStorage.getItem(k) || ''; } catch{ return ''; } }
@@ -269,24 +263,35 @@ function lsSet(k, v) { try { localStorage.setItem(k, v); } catch{} }
 
 // ────────────────────────── BOOT ─────────────────────────────────────────────
 window.addEventListener('load', () => {
+  if (location.protocol === 'file:') {
+    document.body.innerHTML = `
+      <div style="font-family:Rajdhani,sans-serif;color:#fff;background:#050510;height:100vh;
+                  display:flex;flex-direction:column;align-items:center;justify-content:center;
+                  text-align:center;padding:2rem;gap:1rem;">
+        <div style="font-size:2.5rem;">⚠️</div>
+        <div style="font-size:1.4rem;color:#a855f7;font-weight:700;">Servidor local necessário</div>
+        <div style="font-size:1rem;line-height:1.6;color:#ccc;max-width:360px;">
+          Para o YouTube funcionar, não abra este arquivo diretamente.<br><br>
+          <strong style="color:#fff;">Execute o <code>start-chat.bat</code></strong> e use no OBS:<br>
+          <code style="color:#53fc18;font-size:1.1rem;">http://localhost:8080/xumbr3ga-multichat.html</code>
+        </div>
+      </div>`;
+    return;
+  }
   const p = new URLSearchParams(location.search);
   if (p.has('reset')) { try { localStorage.clear(); } catch{} location.replace('?'); return; }
   if (ls('started')) { startOverlay(); return; }
   // Pre-fill config fields
-  document.getElementById('yt-key-in').value = S.ytKey;
-  document.getElementById('ki-in').value     = S.kiId;
+  document.getElementById('ki-in').value = S.kiId;
 });
 
 // ────────────────────────── CONFIG ───────────────────────────────────────────
 function saveConfig() {
-  const key = document.getElementById('yt-key-in').value.trim();
   const vid = document.getElementById('yt-vid-in-cfg').value.trim();
   const kid = document.getElementById('ki-in').value.trim();
-  if (!key) { alert('YouTube API Key é obrigatória.'); return; }
-  S.ytKey = key; S.ytOn = true;
+  S.ytOn = true;
   if (kid) S.kiId = kid;
-  lsSet('ytKey', key);
-  lsSet('ytOn',  'true');
+  lsSet('ytOn',    'true');
   lsSet('started', '1');
   if (kid) lsSet('kiId', kid);
   startOverlay(vid);
@@ -304,11 +309,12 @@ function startOverlay(ytVid) {
   document.getElementById('panel').classList.remove('hidden');
   connectTwitch();
   connectKick();
-  if (S.ytOn && S.ytKey) {
+  if (S.ytOn) {
     if (ytVid) { connectYT(ytVid); }
     else       { showYTBar(); sys('🔴 YouTube: cole o ID da live atual na barra acima.'); }
+  } else {
+    sys('Conectando Twitch + Kick...');
   }
-  if (!S.ytOn) sys('Conectando Twitch + Kick...');
 }
 
 function showYTBar() { document.getElementById('yt-bar').classList.remove('hidden'); }
@@ -405,14 +411,6 @@ function kiRender(text) {
   }).join('');
 }
 
-// YouTube: API may return pre-escaped HTML entities in displayMessage;
-// decode once before re-escaping so emojis and special chars render correctly.
-function ytRender(text) {
-  const decoded = String(text ?? '')
-    .replace(/&amp;/g,'&').replace(/&lt;/g,'<')
-    .replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
-  return esc(decoded);
-}
 
 // ────────────────────────── TWITCH IRC ───────────────────────────────────────
 function connectTwitch() {
@@ -534,80 +532,139 @@ async function connectKick() {
 
 // ────────────────────────── YOUTUBE ──────────────────────────────────────────
 async function connectYT(videoId) {
-  if (!S.ytKey || !videoId) return;
+  if (!videoId) return;
+  clearTimeout(S.ytTimer);
+  S.ytContinuation = null; S.ytIsFirst = true;
+  sys('🔴 YouTube: conectando...');
   try {
-    // 1 unit — get live chat ID from video
-    const r = await ytGet(`videos?part=liveStreamingDetails&id=${encodeURIComponent(videoId)}`);
-    const chatId = r.items?.[0]?.liveStreamingDetails?.activeLiveChatId;
-    if (!chatId) {
-      sys(`🔴 YouTube: video "${videoId}" não tem chat ao vivo ativo.`);
-      showYTBar();
-      return;
-    }
-    S.ytChatId = chatId; S.ytPage = null;
+    const r = await fetch(
+      `/yt-proxy/live_chat?v=${encodeURIComponent(videoId)}&is_popout=1`
+    );
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const html = await r.text();
+    const hasInit = html.includes('ytInitialData');
+    const hasLCR  = html.includes('liveChatRenderer');
+    console.log('[YT] bytes:', html.length, 'ytInitialData:', hasInit, 'liveChatRenderer:', hasLCR);
+    const token = ytExtractToken(html);
+    if (!token) throw new Error(
+      `token não encontrado [bytes:${html.length} init:${hasInit} lcr:${hasLCR}] — live ativa?`
+    );
+    S.ytContinuation = token;
     setOn('yt', true);
-    sys('🔴 YouTube conectado — live encontrada!');
-    ytPoll();
+    sys('🔴 YouTube conectado!');
+    ytPollInternal();
   } catch (e) {
-    sys('🔴 YouTube: erro ao conectar — ' + e.message);
+    sys('🔴 YouTube: falha ao conectar — ' + e.message);
     showYTBar();
   }
 }
 
-async function ytPoll() {
-  if (!S.ytChatId) return;
-  try {
-    let path = `liveChat/messages?liveChatId=${S.ytChatId}&part=snippet,authorDetails&maxResults=200`;
-    if (S.ytPage) path += '&pageToken=' + S.ytPage;
-
-    const r = await ytGet(path);
-    const isFirst = !S.ytPage;
-    S.ytPage = r.nextPageToken;
-
-    if (!isFirst && r.items) {
-      for (const item of r.items) {
-        const type = item.snippet?.type ?? '';
-        const user = item.authorDetails?.displayName ?? 'Anônimo';
-        if (type === 'textMessageEvent') {
-          const text = item.snippet?.displayMessage ?? '';
-          if (text) addMsg({ p:'yt', user, color:'', html: ytRender(text) });
-        } else if (type === 'superChatEvent') {
-          const text   = item.snippet?.superChatDetails?.userComment ?? '';
-          const amount = item.snippet?.superChatDetails?.amountDisplayString ?? '';
-          sys(`🔴 Super Chat de ${esc(user)}: ${esc(amount)}`);
-          if (text) addMsg({ p:'yt', user, color:'#ffcc44', html: esc(text) });
-        } else if (type === 'newSponsorEvent' || type === 'memberMilestoneChatEvent') {
-          sys(`🔴 ${esc(user)} é membro no YouTube!`);
-        }
-      }
+// ── Extract initial continuation token from the live_chat page ───────────────
+function ytExtractToken(html) {
+  // Search directly in the raw HTML — avoids parsing the huge ytInitialData JSON.
+  // YouTube embeds the token inside reloadContinuationData / timedContinuationData.
+  const patterns = [
+    /"reloadContinuationData"\s*:\s*\{\s*"continuation"\s*:\s*"([^"]{20,})"/,
+    /"timedContinuationData"\s*:\s*\{[^}]{0,200}"continuation"\s*:\s*"([^"]{20,})"/,
+    /"invalidationContinuationData"\s*:\s*\{[^}]{0,200}"continuation"\s*:\s*"([^"]{20,})"/,
+    /"continuation"\s*:\s*"([^"]{20,})"[^}]{0,100}"clickTrackingParams"/,
+  ];
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m?.[1]) {
+      console.log('[YT] token encontrado via padrão:', re.source.slice(0, 40));
+      return m[1];
     }
+  }
+  console.warn('[YT] nenhum token encontrado. ytInitialData presente?', html.includes('ytInitialData'));
+  return null;
+}
 
-    const interval = Math.max(r.pollingIntervalMillis ?? 5000, 10000);
-    S.ytTimer = setTimeout(ytPoll, interval);
+// ── Internal API polling ──────────────────────────────────────────────────────
+async function ytPollInternal() {
+  if (!S.ytContinuation) return;
+  try {
+    const resp = await fetch('/yt-proxy/youtubei/v1/live_chat/get_live_chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        context: { client: { clientName: 'WEB', clientVersion: '2.20240101.00.00', hl: 'en' } },
+        continuation: S.ytContinuation
+      })
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
 
-  } catch (e) {
-    if (e.message.includes('quota')) {
-      sys('🔴 YouTube: quota da API excedida. Chat pausado.');
-      setOn('yt', false);
-    } else if (e.message.includes('liveChatEnded') || e.message.includes('notFound') || e.message.includes('404')) {
-      sys('🔴 YouTube: live encerrada. Cole o ID da próxima live (tecla Y).');
-      setOn('yt', false);
-      S.ytChatId = null; S.ytPage = null;
-      showYTBar();
+    const data = await resp.json();
+    const lcc  = data.continuationContents?.liveChatContinuation;
+    if (!lcc) throw new Error('liveChatContinuation ausente');
+
+    // Update continuation token for next poll
+    const nc  = lcc.continuations?.[0];
+    const tok = nc?.timedContinuationData?.continuation
+             || nc?.invalidationContinuationData?.continuation
+             || nc?.reloadContinuationData?.continuation;
+    if (tok) S.ytContinuation = tok;
+
+    const pollMs = nc?.timedContinuationData?.timeoutMs
+                || nc?.invalidationContinuationData?.timeoutMs
+                || 5000;
+
+    // Skip first batch (historical messages loaded at connect time)
+    if (!S.ytIsFirst) {
+      for (const action of lcc.actions ?? []) ytHandleAction(action);
+    }
+    S.ytIsFirst = false;
+
+    S.ytTimer = setTimeout(ytPollInternal, Math.max(pollMs, 2000));
+  } catch(e) {
+    if (/404|ended|not.*found/i.test(e.message)) {
+      sys('🔴 YouTube: live encerrada. Tecla Y para nova live.');
+      setOn('yt', false); S.ytContinuation = null; showYTBar();
     } else {
-      sys('🔴 YouTube: erro — ' + e.message + '. Tentando em 15s...');
-      S.ytTimer = setTimeout(ytPoll, 15000);
+      S.ytTimer = setTimeout(ytPollInternal, 8000);
     }
   }
 }
 
-async function ytGet(path) {
-  const sep = path.includes('?') ? '&' : '?';
-  const r   = await fetch('https://www.googleapis.com/youtube/v3/' + path + sep + 'key=' + encodeURIComponent(S.ytKey));
-  const d   = await r.json();
-  if (d.error) throw new Error(d.error.message ?? JSON.stringify(d.error));
-  return d;
+function ytHandleAction(action) {
+  const item = action.addChatItemAction?.item;
+  if (!item) return;
+
+  const msg = item.liveChatTextMessageRenderer;
+  const paid = item.liveChatPaidMessageRenderer;
+  const mem  = item.liveChatMembershipItemRenderer;
+
+  if (msg) {
+    const user = msg.authorName?.simpleText ?? 'Anônimo';
+    const html = ytParseRuns(msg.message?.runs ?? []);
+    if (html?.trim()) addMsg({ p:'yt', user, color:'', html });
+  }
+  if (paid) {
+    const user   = paid.authorName?.simpleText ?? 'Anônimo';
+    const amount = paid.purchaseAmountText?.simpleText ?? '';
+    sys(`🔴 Super Chat de ${esc(user)}: ${esc(amount)}`);
+    const html = ytParseRuns(paid.message?.runs ?? []);
+    if (html?.trim()) addMsg({ p:'yt', user, color:'#ffcc44', html });
+  }
+  if (mem) {
+    sys(`🔴 ${esc(mem.authorName?.simpleText ?? 'Alguém')} se tornou membro!`);
+  }
 }
+
+// Converts YouTube message `runs` array to safe HTML with real emoji images
+function ytParseRuns(runs) {
+  return runs.map(run => {
+    if (typeof run.text === 'string') return esc(run.text);
+    if (run.emoji) {
+      const url  = run.emoji.image?.thumbnails?.[0]?.url ?? '';
+      const name = (run.emoji.shortcuts?.[0] ?? run.emoji.emojiId ?? '').replace(/:/g, '');
+      if (url)  return `<img src="${url}" alt="${esc(name)}" title="${esc(name)}" style="height:1.4em;vertical-align:middle;margin:0 2px;">`;
+      if (name) return esc(name); // last resort: plain text name
+    }
+    return '';
+  }).join('');
+}
+
 
 // ────────────────────────── HOTKEYS ──────────────────────────────────────────
 document.addEventListener('keydown', (e) => {
@@ -620,7 +677,7 @@ document.addEventListener('keydown', (e) => {
   }
   // Y = change YouTube video ID (new live)
   if (e.key === 'y' || e.key === 'Y') {
-    if (!S.ytOn || !S.ytKey) return;
+    if (!S.ytOn) return;
     clearTimeout(S.ytTimer);
     S.ytChatId = null; S.ytPage = null;
     setOn('yt', false);
