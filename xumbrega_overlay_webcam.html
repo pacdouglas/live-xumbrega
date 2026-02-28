@@ -3,7 +3,6 @@
 <head>
 <meta charset="UTF-8">
 <title>Xumbr3ga - Gameplay Frame</title>
-<script src="https://js.pusher.com/8.2/pusher.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@400;600;700&display=swap');
   * { margin:0;padding:0;box-sizing:border-box; }
@@ -141,8 +140,6 @@
 
 <script>
 // ── CONFIG ────────────────────────────────────────────────────────────────────
-const TW_CH = 'xumbr3ga';
-const KI_CH = 'xumbr3ga';
 const BC  = { tw:'#a855f7', yt:'#ff6b6b', ki:'#53fc18' };
 const SVG = {
   tw:`<svg viewBox="0 0 24 24" fill="currentColor" style="width:8px;height:8px"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>`,
@@ -259,173 +256,14 @@ function boostColor(hex) {
   return '#'+r.toString(16).padStart(2,'0')+g.toString(16).padStart(2,'0')+b.toString(16).padStart(2,'0');
 }
 
-function kiRender(text) {
-  return String(text??'').split(/(\[emote:\d+:[^\]]+\])/).map(part=>{
-    const m=part.match(/^\[emote:(\d+):([^\]]+)\]$/);
-    if(m){const[,id,name]=m;return `<img src="https://files.kick.com/emotes/${id}/fullsize" alt=":${esc(name)}:" title=":${esc(name)}:" style="height:1.2em;vertical-align:middle;margin:0 1px;">`;}
-    return esc(part);
-  }).join('');
-}
-
-
-// ── TWITCH ────────────────────────────────────────────────────────────────────
-function connectTwitch() {
-  const ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
-  ws.onopen = () => {
-    ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
-    ws.send('NICK justinfan' + (10000 + Math.floor(Math.random() * 89999)));
-    ws.send('JOIN #' + TW_CH);
-  };
-  ws.onmessage = (e) => {
-    for (const line of e.data.split('\r\n')) {
-      if (!line) continue;
-      if (line.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); continue; }
-      if (line.includes('PRIVMSG')) {
-        const tags = twTags(line);
-        const m    = line.match(/PRIVMSG #\S+ :(.+)$/);
-        if (m) addMsg({ p:'tw', user:tags['display-name']||'Anônimo', color:tags['color']||'', html:twEmotes(m[1],tags['emotes']) });
-      }
-    }
-  };
-  ws.onclose = () => setTimeout(connectTwitch, 5000);
-  ws.onerror = () => ws.close();
-}
-
-function twTags(line) {
-  const raw = line.match(/^@([^ ]+)/)?.[1] ?? '';
-  return Object.fromEntries(raw.split(';').map(t => { const i=t.indexOf('='); return [t.slice(0,i),t.slice(i+1)]; }));
-}
-
-function twEmotes(text, tag) {
-  if (!tag) return esc(text);
-  const reps=[];
-  for (const part of tag.split('/')) {
-    const [id,pos]=part.split(':'); if(!pos) continue;
-    for (const p of pos.split(',')) { const [s,e]=p.split('-').map(Number); reps.push({s,e:e+1,id}); }
-  }
-  if (!reps.length) return esc(text);
-  reps.sort((a,b)=>a.s-b.s);
-  let out='',last=0;
-  for (const {s,e,id} of reps) {
-    out+=esc(text.slice(last,s));
-    const alt=esc(text.slice(s,e));
-    out+=`<img src="https://static-cdn.jtvnw.net/emoticons/v2/${id}/default/dark/1.0" alt="${alt}" title="${alt}" style="height:1.2em;vertical-align:middle;margin:0 1px;">`;
-    last=e;
-  }
-  return out+esc(text.slice(last));
-}
-
-// ── KICK ──────────────────────────────────────────────────────────────────────
-const KI = { id:'' };
-
-async function connectKick() {
-  if (!KI.id) {
-    try {
-      const r = await fetch(`https://kick.com/api/v2/channels/${KI_CH}`, { headers:{ Accept:'application/json' } });
-      if (!r.ok) throw new Error('HTTP '+r.status);
-      const d = await r.json();
-      KI.id = String(d.chatroom?.id ?? '');
-    } catch { setTimeout(connectKick, 10000); return; }
-  }
-  if (!KI.id) return;
-  if (typeof Pusher === 'undefined') { setTimeout(connectKick, 8000); return; }
-  const pusher = new Pusher('32cbd69e4b950bf97679', { cluster:'us2', forceTLS:true });
-  const ch = pusher.subscribe(`chatrooms.${KI.id}.v2`);
-  ch.bind('App\\Events\\ChatMessageEvent', (data) => {
-    const user  = data.sender?.username ?? data.sender?.slug ?? 'Anônimo';
-    const color = data.sender?.identity?.color ?? '';
-    const text  = data.content ?? '';
-    if (text) addMsg({ p:'ki', user, color, html:kiRender(text) });
-  });
-}
-
-// ── YOUTUBE ───────────────────────────────────────────────────────────────────
-const YT = { continuation:null, isFirst:true, timer:null };
-
-async function connectYT(videoId) {
-  if (!videoId) return;
-  clearTimeout(YT.timer);
-  YT.continuation=null; YT.isFirst=true;
-  try {
-    const r = await fetch(`/yt-proxy/live_chat?v=${encodeURIComponent(videoId)}&is_popout=1`);
-    if (!r.ok) throw new Error('HTTP '+r.status);
-    const html = await r.text();
-    const token = ytExtractToken(html);
-    if (!token) throw new Error('token não encontrado');
-    YT.continuation=token;
-    ytPoll();
-  } catch(e) { console.warn('[YT overlay]', e.message); }
-}
-
-function ytExtractToken(html) {
-  const patterns=[
-    /"reloadContinuationData"\s*:\s*\{\s*"continuation"\s*:\s*"([^"]{20,})"/,
-    /"timedContinuationData"\s*:\s*\{[^}]{0,200}"continuation"\s*:\s*"([^"]{20,})"/,
-    /"invalidationContinuationData"\s*:\s*\{[^}]{0,200}"continuation"\s*:\s*"([^"]{20,})"/,
-    /"continuation"\s*:\s*"([^"]{20,})"[^}]{0,100}"clickTrackingParams"/,
-  ];
-  for (const re of patterns) { const m=html.match(re); if(m?.[1]) return m[1]; }
-  return null;
-}
-
-async function ytPoll() {
-  if (!YT.continuation) return;
-  try {
-    const resp = await fetch('/yt-proxy/youtubei/v1/live_chat/get_live_chat', {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json' },
-      body:JSON.stringify({ context:{ client:{ clientName:'WEB', clientVersion:'2.20240101.00.00', hl:'en' } }, continuation:YT.continuation })
-    });
-    if (!resp.ok) throw new Error('HTTP '+resp.status);
-    const data=await resp.json();
-    const lcc=data.continuationContents?.liveChatContinuation;
-    if (!lcc) throw new Error('no lcc');
-    const nc=lcc.continuations?.[0];
-    const tok=nc?.timedContinuationData?.continuation||nc?.invalidationContinuationData?.continuation||nc?.reloadContinuationData?.continuation;
-    if (tok) YT.continuation=tok;
-    const pollMs=nc?.timedContinuationData?.timeoutMs||nc?.invalidationContinuationData?.timeoutMs||5000;
-    if (!YT.isFirst) for (const action of lcc.actions??[]) ytHandleAction(action);
-    YT.isFirst=false;
-    YT.timer=setTimeout(ytPoll, Math.max(pollMs,2000));
-  } catch(e) { YT.timer=setTimeout(ytPoll,8000); }
-}
-
-function ytHandleAction(action) {
-  const item=action.addChatItemAction?.item; if(!item) return;
-  const msg=item.liveChatTextMessageRenderer;
-  const paid=item.liveChatPaidMessageRenderer;
-  if (msg) {
-    const user=msg.authorName?.simpleText??'Anônimo';
-    const html=ytParseRuns(msg.message?.runs??[]);
-    if (html?.trim()) addMsg({ p:'yt', user, color:'', html });
-  }
-  if (paid) {
-    const user=paid.authorName?.simpleText??'Anônimo';
-    const html=ytParseRuns(paid.message?.runs??[]);
-    if (html?.trim()) addMsg({ p:'yt', user, color:'#ffcc44', html });
-  }
-}
-
-function ytParseRuns(runs) {
-  return runs.map(run=>{
-    if(typeof run.text==='string') return esc(run.text);
-    if(run.emoji){
-      const url=run.emoji.image?.thumbnails?.[0]?.url??'';
-      const name=(run.emoji.shortcuts?.[0]??run.emoji.emojiId??'').replace(/:/g,'');
-      if(url) return `<img src="${url}" alt="${esc(name)}" title="${esc(name)}" style="height:1.2em;vertical-align:middle;margin:0 1px;">`;
-      if(name) return esc(name);
-    }
-    return '';
-  }).join('');
-}
-
 // ── INIT ──────────────────────────────────────────────────────────────────────
 window.addEventListener('load', () => {
-  const params = new URLSearchParams(location.search);
-  connectTwitch();
-  connectKick();
-  const ytId = params.get('yt') || '';
-  if (ytId) connectYT(ytId);
+  const es = new EventSource('/events');  // sem history — só ao vivo
+  es.onmessage = ({ data }) => {
+    const msg = JSON.parse(data);
+    if (msg.p === 'status' || msg.p === 'sys' || msg.p === 'viewers') return;
+    addMsg(msg);
+  };
 });
 </script>
 
