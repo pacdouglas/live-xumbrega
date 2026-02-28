@@ -391,6 +391,29 @@ function esc(s) {
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// Kick: converts [emote:ID:name] to <img> tags, escapes the rest
+function kiRender(text) {
+  return String(text ?? '').split(/(\[emote:\d+:[^\]]+\])/).map(part => {
+    const m = part.match(/^\[emote:(\d+):([^\]]+)\]$/);
+    if (m) {
+      const [, id, name] = m;
+      return `<img src="https://files.kick.com/emotes/${id}/fullsize" `
+           + `alt=":${esc(name)}:" title=":${esc(name)}:" `
+           + `style="height:1.4em;vertical-align:middle;margin:0 2px;">`;
+    }
+    return esc(part);
+  }).join('');
+}
+
+// YouTube: API may return pre-escaped HTML entities in displayMessage;
+// decode once before re-escaping so emojis and special chars render correctly.
+function ytRender(text) {
+  const decoded = String(text ?? '')
+    .replace(/&amp;/g,'&').replace(/&lt;/g,'<')
+    .replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
+  return esc(decoded);
+}
+
 // ────────────────────────── TWITCH IRC ───────────────────────────────────────
 function connectTwitch() {
   const ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
@@ -499,7 +522,7 @@ async function connectKick() {
     const user  = data.sender?.username ?? data.sender?.slug ?? 'Anônimo';
     const color = data.sender?.identity?.color ?? '';
     const text  = data.content ?? '';
-    if (text) addMsg({ p:'ki', user, color, html: esc(text) });
+    if (text) addMsg({ p:'ki', user, color, html: kiRender(text) });
   });
   ch.bind('App\\Events\\SubscriptionEvent', (data) => {
     sys(`🟢 ${data.username ?? 'Alguém'} assinou no Kick!`);
@@ -547,7 +570,7 @@ async function ytPoll() {
         const user = item.authorDetails?.displayName ?? 'Anônimo';
         if (type === 'textMessageEvent') {
           const text = item.snippet?.displayMessage ?? '';
-          if (text) addMsg({ p:'yt', user, color:'', html: esc(text) });
+          if (text) addMsg({ p:'yt', user, color:'', html: ytRender(text) });
         } else if (type === 'superChatEvent') {
           const text   = item.snippet?.superChatDetails?.userComment ?? '';
           const amount = item.snippet?.superChatDetails?.amountDisplayString ?? '';
