@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Xumbr3ga — Multi Chat</title>
+<script src="https://js.pusher.com/8.2/pusher.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@400;600;700&display=swap');
+
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{width:100%;height:100%;background:transparent;overflow:hidden;font-family:'Rajdhani',sans-serif;}
+
+/* ── PANEL ── */
+#panel{
+  position:absolute;inset:0;
+  display:flex;flex-direction:column;
+  background:rgba(8,4,20,0.88);
+  border:1px solid rgba(168,85,247,0.5);
+  border-radius:8px;
+  box-shadow:0 0 30px rgba(168,85,247,0.25),inset 0 0 20px rgba(168,85,247,0.03);
+  overflow:hidden;
+  backdrop-filter:blur(12px);
+}
+
+/* ── HEADER ── */
+#hdr{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 14px;flex-shrink:0;
+  background:rgba(168,85,247,0.1);
+  border-bottom:1px solid rgba(168,85,247,0.35);
+}
+.htitle{
+  font-family:'Orbitron',monospace;font-size:11px;font-weight:900;
+  color:#fff;letter-spacing:4px;text-shadow:0 0 10px rgba(168,85,247,0.7);
+}
+.plats{display:flex;gap:7px;align-items:center;}
+.pb{
+  font-family:'Orbitron',monospace;font-size:8px;font-weight:900;
+  padding:3px 8px;border-radius:3px;letter-spacing:1px;
+  opacity:0.28;transition:opacity .4s,box-shadow .4s;display:flex;align-items:center;gap:4px;
+}
+.pb.on{opacity:1;box-shadow:0 0 10px var(--g);}
+.pb.tw{background:#9147ff;color:#fff;--g:rgba(145,71,255,0.7);}
+.pb.yt{background:#cc0000;color:#fff;--g:rgba(204,0,0,0.7);}
+.pb.ki{background:#53fc18;color:#000;--g:rgba(83,252,24,0.7);}
+.pb svg{width:9px;height:9px;flex-shrink:0;}
+
+/* ── YT VIDEO ID BAR ── */
+#yt-bar{
+  display:flex;align-items:center;gap:8px;
+  padding:7px 12px;flex-shrink:0;
+  background:rgba(204,0,0,0.08);
+  border-bottom:1px solid rgba(204,0,0,0.3);
+}
+#yt-bar label{
+  font-family:'Orbitron',monospace;font-size:8px;color:rgba(255,100,100,0.8);
+  letter-spacing:2px;white-space:nowrap;flex-shrink:0;
+}
+#yt-vid-in{
+  flex:1;padding:5px 9px;min-width:0;
+  background:rgba(204,0,0,0.12);border:1px solid rgba(204,0,0,0.4);border-radius:3px;
+  color:#fff;font-family:'Rajdhani',sans-serif;font-size:13px;outline:none;
+}
+#yt-vid-in:focus{border-color:#cc0000;box-shadow:0 0 8px rgba(204,0,0,0.4);}
+#yt-vid-in::placeholder{color:rgba(255,255,255,0.25);}
+#yt-vid-btn{
+  padding:5px 12px;flex-shrink:0;
+  background:rgba(204,0,0,0.3);border:1px solid rgba(204,0,0,0.6);border-radius:3px;
+  color:#fff;font-family:'Orbitron',monospace;font-size:8px;letter-spacing:1px;cursor:pointer;
+  transition:background .2s;
+}
+#yt-vid-btn:hover{background:rgba(204,0,0,0.55);}
+
+/* ── MESSAGES ── */
+#msgs{
+  flex:1;overflow-y:auto;overflow-x:hidden;
+  padding:8px 10px;display:flex;flex-direction:column;gap:6px;
+}
+#msgs::-webkit-scrollbar{width:3px;}
+#msgs::-webkit-scrollbar-thumb{background:rgba(168,85,247,0.4);border-radius:2px;}
+
+.msg{
+  display:flex;flex-direction:column;gap:3px;padding:8px 10px;
+  background:rgba(168,85,247,0.06);border-left:3px solid var(--bc,#a855f7);
+  border-radius:0 6px 6px 0;animation:mIn .28s ease;word-break:break-word;flex-shrink:0;
+}
+@keyframes mIn{from{opacity:0;transform:translateX(-8px);}to{opacity:1;transform:translateX(0);}}
+.msg-top{display:flex;align-items:center;gap:6px;}
+.mbadge{
+  font-family:'Orbitron',monospace;font-size:7px;font-weight:900;
+  padding:2px 5px;border-radius:2px;flex-shrink:0;letter-spacing:.5px;display:flex;align-items:center;gap:3px;
+}
+.mbadge svg{width:8px;height:8px;}
+.mbadge.tw{background:#9147ff;color:#fff;}
+.mbadge.yt{background:#cc0000;color:#fff;}
+.mbadge.ki{background:#53fc18;color:#000;}
+.muser{font-family:'Orbitron',monospace;font-size:9px;font-weight:900;letter-spacing:1px;}
+.mtext{font-size:14px;font-weight:400;color:rgba(220,210,240,0.95);line-height:1.4;padding-left:1px;}
+.mtext img{height:1.2em;vertical-align:middle;margin:0 1px;}
+.msys{
+  text-align:center;font-family:'Orbitron',monospace;font-size:8px;
+  color:rgba(192,132,252,0.75);letter-spacing:2px;
+  padding:5px 8px;border:1px solid rgba(168,85,247,0.25);border-radius:4px;
+  background:rgba(88,28,135,0.15);animation:mIn .28s ease;flex-shrink:0;
+}
+
+/* ── CONFIG SCREEN ── */
+#cfg{
+  position:absolute;inset:0;z-index:100;
+  background:rgba(6,2,16,0.97);
+  display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+  gap:10px;padding:20px 18px;overflow-y:auto;border-radius:8px;
+}
+.cfg-h{font-family:'Orbitron',monospace;font-size:13px;color:#fff;letter-spacing:3px;text-align:center;}
+.cfg-sub{font-size:12px;color:rgba(200,180,240,0.65);text-align:center;line-height:1.6;max-width:340px;}
+.cfg-section{
+  width:100%;background:rgba(168,85,247,0.05);border:1px solid rgba(168,85,247,0.2);
+  border-radius:6px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;
+}
+.cfg-section.tw-sec{border-color:rgba(145,71,255,0.3);background:rgba(145,71,255,0.05);}
+.cfg-section.yt-sec{border-color:rgba(204,0,0,0.3);background:rgba(204,0,0,0.05);}
+.cfg-section.ki-sec{border-color:rgba(83,252,24,0.2);background:rgba(83,252,24,0.03);}
+.cfg-plat{
+  display:flex;align-items:center;gap:8px;
+  font-family:'Orbitron',monospace;font-size:10px;font-weight:900;letter-spacing:2px;
+}
+.cfg-plat .dot{width:8px;height:8px;border-radius:50%;}
+.cfg-plat.tw .dot{background:#9147ff;box-shadow:0 0 6px #9147ff;}
+.cfg-plat.yt .dot{background:#cc0000;box-shadow:0 0 6px #cc0000;}
+.cfg-plat.ki .dot{background:#53fc18;box-shadow:0 0 6px #53fc18;}
+.cfg-plat.tw{color:#c084fc;}
+.cfg-plat.yt{color:#ff6666;}
+.cfg-plat.ki{color:#53fc18;}
+.cfg-ok{font-size:12px;color:rgba(83,252,24,0.8);}
+.cfg-lbl{font-family:'Orbitron',monospace;font-size:8px;color:rgba(192,132,252,0.7);letter-spacing:2px;}
+.cfg-in{
+  width:100%;padding:8px 11px;
+  background:rgba(168,85,247,0.1);border:1px solid rgba(168,85,247,0.4);border-radius:4px;
+  color:#fff;font-family:'Rajdhani',sans-serif;font-size:14px;outline:none;
+}
+.cfg-in:focus{border-color:#a855f7;box-shadow:0 0 8px rgba(168,85,247,0.3);}
+.cfg-in.yt{background:rgba(204,0,0,0.1);border-color:rgba(204,0,0,0.4);}
+.cfg-in.yt:focus{border-color:#cc0000;box-shadow:0 0 8px rgba(204,0,0,0.3);}
+.cfg-in.ki{background:rgba(83,252,24,0.05);border-color:rgba(83,252,24,0.3);}
+.cfg-in.ki:focus{border-color:#53fc18;box-shadow:0 0 8px rgba(83,252,24,0.2);}
+.cfg-note{font-size:11px;color:rgba(168,85,247,0.45);line-height:1.5;}
+.cfg-note.yt{color:rgba(255,102,102,0.5);}
+.cfg-note.ki{color:rgba(83,252,24,0.4);}
+.cfg-note strong{font-weight:700;opacity:.85;}
+.cfg-btn{
+  width:100%;padding:10px;
+  background:rgba(168,85,247,0.25);border:1px solid #a855f7;border-radius:4px;
+  color:#fff;font-family:'Orbitron',monospace;font-size:10px;letter-spacing:2px;
+  cursor:pointer;transition:background .2s;
+}
+.cfg-btn:hover{background:rgba(168,85,247,0.45);}
+.cfg-btn.sec{
+  background:transparent;border-color:rgba(168,85,247,0.2);
+  color:rgba(192,132,252,0.4);font-size:9px;padding:7px;
+}
+.cfg-hr{width:100%;border:none;border-top:1px solid rgba(168,85,247,0.15);margin:2px 0;}
+.hidden{display:none!important;}
+</style>
+</head>
+<body>
+
+<!-- CONFIG SCREEN -->
+<div id="cfg">
+  <p class="cfg-h">XUMBR3GA — MULTI CHAT</p>
+  <p class="cfg-sub">Configura uma vez. Twitch e Kick conectam sozinhos.<br>YouTube precisa de API key gratuita + ID da live.</p>
+
+  <!-- TWITCH -->
+  <div class="cfg-section tw-sec">
+    <div class="cfg-plat tw"><span class="dot"></span>TWITCH</div>
+    <p class="cfg-ok">✓ Automático — sem configuração</p>
+    <p class="cfg-note">Conecta via WebSocket IRC sem nenhuma credencial.</p>
+  </div>
+
+  <!-- KICK -->
+  <div class="cfg-section ki-sec">
+    <div class="cfg-plat ki"><span class="dot"></span>KICK</div>
+    <p class="cfg-ok" style="color:rgba(83,252,24,0.7)">✓ Quase automático</p>
+    <div class="cfg-lbl">CHATROOM ID (OPCIONAL — detectado automaticamente)</div>
+    <input id="ki-in" class="cfg-in ki" type="text" placeholder="Preenchido automaticamente">
+    <p class="cfg-note ki">
+      O overlay busca o chatroom ID automaticamente.<br>
+      Se falhar, abra <strong>kick.com/api/v2/channels/xumbr3ga</strong> no browser e copie o campo <strong>chatroom.id</strong>.
+    </p>
+  </div>
+
+  <!-- YOUTUBE -->
+  <div class="cfg-section yt-sec">
+    <div class="cfg-plat yt"><span class="dot"></span>YOUTUBE</div>
+    <div class="cfg-lbl">API KEY *</div>
+    <input id="yt-key-in" class="cfg-in yt" type="password" placeholder="AIzaSy...">
+    <p class="cfg-note yt">
+      Grátis em <strong>console.cloud.google.com</strong> → APIs &amp; Services → YouTube Data API v3.<br>
+      Salva uma vez, nunca precisa repetir.
+    </p>
+    <div class="cfg-lbl">VIDEO ID DA LIVE * (pega do URL da live)</div>
+    <input id="yt-vid-in-cfg" class="cfg-in yt" type="text" placeholder="ex: Fpfdw0iXuv8">
+    <p class="cfg-note yt">
+      Na URL da live: <strong>youtube.com/watch?v=<span style="color:#ff8888">VIDEO_ID</span></strong><br>
+      Ou abra o chat popout que você encontrou: o ID está no parâmetro <strong>v=</strong>.<br>
+      Você vai trocar isso a cada live (pode fazer via tecla <strong>Y</strong> sem reabrir o setup completo).
+    </p>
+  </div>
+
+  <hr class="cfg-hr">
+  <button class="cfg-btn" onclick="saveConfig()">CONECTAR</button>
+  <button class="cfg-btn sec" onclick="noYT()">CONECTAR SEM YOUTUBE (só Twitch + Kick)</button>
+</div>
+
+<!-- CHAT PANEL -->
+<div id="panel" class="hidden">
+  <div id="hdr">
+    <span class="htitle">XUMBR3GA</span>
+    <div class="plats">
+      <span id="st-tw" class="pb tw" title="Twitch">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
+        TW
+      </span>
+      <span id="st-yt" class="pb yt" title="YouTube">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M23.495 6.205a3.007 3.007 0 00-2.088-2.088c-1.87-.501-9.396-.501-9.396-.501s-7.507-.01-9.396.501A3.007 3.007 0 00.527 6.205a31.247 31.247 0 00-.522 5.805 31.247 31.247 0 00.522 5.783 3.007 3.007 0 002.088 2.088c1.868.502 9.396.502 9.396.502s7.506 0 9.396-.502a3.007 3.007 0 002.088-2.088 31.247 31.247 0 00.5-5.783 31.247 31.247 0 00-.5-5.805zM9.609 15.601V8.408l6.264 3.602z"/></svg>
+        YT
+      </span>
+      <span id="st-ki" class="pb ki" title="Kick">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 3h3v7l6.5-7H17l-7 7 7.5 11H14L8 13.5V21H4z"/></svg>
+        KI
+      </span>
+    </div>
+  </div>
+
+  <!-- YouTube live ID bar (shown when YT configured but no active video ID) -->
+  <div id="yt-bar" class="hidden">
+    <label for="yt-vid-in">YT VIDEO ID</label>
+    <input id="yt-vid-in" type="text" placeholder="Cole o ID da live de hoje (ex: Fpfdw0iXuv8)" autocomplete="off">
+    <button id="yt-vid-btn" onclick="connectYTFromBar()">CONECTAR</button>
+  </div>
+
+  <div id="msgs"></div>
+</div>
+
+<script>
+// ────────────────────────── CONSTANTS ────────────────────────────────────────
+const TW_CH  = 'xumbr3ga';
+const KI_CH  = 'xumbr3ga';
+const MAX    = 60;
+
+const BC  = { tw: '#a855f7', yt: '#ff6b6b', ki: '#53fc18' };
+const SVG = {
+  tw: `<svg viewBox="0 0 24 24" fill="currentColor" style="width:8px;height:8px"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>`,
+  yt: `<svg viewBox="0 0 24 24" fill="currentColor" style="width:8px;height:8px"><path d="M23.495 6.205a3.007 3.007 0 00-2.088-2.088c-1.87-.501-9.396-.501-9.396-.501s-7.507-.01-9.396.501A3.007 3.007 0 00.527 6.205a31.247 31.247 0 00-.522 5.805 31.247 31.247 0 00.522 5.783 3.007 3.007 0 002.088 2.088c1.868.502 9.396.502 9.396.502s7.506 0 9.396-.502a3.007 3.007 0 002.088-2.088 31.247 31.247 0 00.5-5.783 31.247 31.247 0 00-.5-5.805zM9.609 15.601V8.408l6.264 3.602z"/></svg>`,
+  ki: `<svg viewBox="0 0 24 24" fill="currentColor" style="width:8px;height:8px"><path d="M4 3h3v7l6.5-7H17l-7 7 7.5 11H14L8 13.5V21H4z"/></svg>`
+};
+
+// ────────────────────────── STATE ────────────────────────────────────────────
+const S = {
+  ytKey:   ls('ytKey'),
+  ytOn:    ls('ytOn') !== 'false',
+  kiId:    ls('kiId'),
+  ytChatId: null,
+  ytPage:   null,
+  ytTimer:  null,
+};
+
+function ls(k) { try { return localStorage.getItem(k) || ''; } catch{ return ''; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch{} }
+
+// ────────────────────────── BOOT ─────────────────────────────────────────────
+window.addEventListener('load', () => {
+  const p = new URLSearchParams(location.search);
+  if (p.has('reset')) { try { localStorage.clear(); } catch{} location.replace('?'); return; }
+  if (ls('started')) { startOverlay(); return; }
+  // Pre-fill config fields
+  document.getElementById('yt-key-in').value = S.ytKey;
+  document.getElementById('ki-in').value     = S.kiId;
+});
+
+// ────────────────────────── CONFIG ───────────────────────────────────────────
+function saveConfig() {
+  const key = document.getElementById('yt-key-in').value.trim();
+  const vid = document.getElementById('yt-vid-in-cfg').value.trim();
+  const kid = document.getElementById('ki-in').value.trim();
+  if (!key) { alert('YouTube API Key é obrigatória.'); return; }
+  S.ytKey = key; S.ytOn = true;
+  if (kid) S.kiId = kid;
+  lsSet('ytKey', key);
+  lsSet('ytOn',  'true');
+  lsSet('started', '1');
+  if (kid) lsSet('kiId', kid);
+  startOverlay(vid);
+}
+
+function noYT() {
+  S.ytOn = false;
+  lsSet('ytOn', 'false');
+  lsSet('started', '1');
+  startOverlay('');
+}
+
+function startOverlay(ytVid) {
+  document.getElementById('cfg').classList.add('hidden');
+  document.getElementById('panel').classList.remove('hidden');
+  connectTwitch();
+  connectKick();
+  if (S.ytOn && S.ytKey) {
+    if (ytVid) { connectYT(ytVid); }
+    else       { showYTBar(); sys('🔴 YouTube: cole o ID da live atual na barra acima.'); }
+  }
+  if (!S.ytOn) sys('Conectando Twitch + Kick...');
+}
+
+function showYTBar() { document.getElementById('yt-bar').classList.remove('hidden'); }
+function hideYTBar() { document.getElementById('yt-bar').classList.add('hidden'); }
+
+function connectYTFromBar() {
+  const vid = document.getElementById('yt-vid-in').value.trim();
+  if (!vid) { alert('Cole o video ID da live.'); return; }
+  hideYTBar();
+  connectYT(vid);
+}
+
+// ────────────────────────── STATUS DOTS ──────────────────────────────────────
+function setOn(p, v) { document.getElementById('st-' + p)?.classList.toggle('on', !!v); }
+
+// ────────────────────────── MESSAGE RENDERING ─────────────────────────────────
+function sys(text) {
+  const d = document.createElement('div');
+  d.className = 'msys'; d.textContent = text; push(d);
+}
+
+// Boosts a hex color so it's always legible on a dark background.
+// Keeps the original hue/saturation but enforces a minimum lightness.
+function boostColor(hex) {
+  if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) return null;
+  let r = parseInt(hex.slice(1,3),16)/255;
+  let g = parseInt(hex.slice(3,5),16)/255;
+  let b = parseInt(hex.slice(5,7),16)/255;
+  const max = Math.max(r,g,b), min = Math.min(r,g,b);
+  let h = 0, s = 0, l = (max+min)/2;
+  if (max !== min) {
+    const d = max-min;
+    s = l > 0.5 ? d/(2-max-min) : d/(max+min);
+    switch(max) {
+      case r: h = (g-b)/d + (g<b?6:0); break;
+      case g: h = (b-r)/d + 2; break;
+      case b: h = (r-g)/d + 4; break;
+    }
+    h /= 6;
+  }
+  // Enforce min lightness 70% and min saturation 55% so color is vivid and bright
+  l = Math.max(l, 0.70);
+  s = Math.max(s, 0.55);
+  function hue2rgb(p,q,t){if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;}
+  const q = l<0.5 ? l*(1+s) : l+s-l*s, p = 2*l-q;
+  r = Math.round(hue2rgb(p,q,h+1/3)*255);
+  g = Math.round(hue2rgb(p,q,h)*255);
+  b = Math.round(hue2rgb(p,q,h-1/3)*255);
+  return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`;
+}
+
+function addMsg({ p, user, color, html }) {
+  if (!html?.trim()) return;
+  const d = document.createElement('div');
+  d.className = 'msg';
+  d.style.setProperty('--bc', BC[p]);
+  // Use boosted color for readability; fall back to platform default (also boosted)
+  const raw = (color && /^#[0-9a-f]{6}$/i.test(color)) ? color : BC[p];
+  const uc  = boostColor(raw) || BC[p];
+  d.innerHTML =
+    `<div class="msg-top">` +
+      `<span class="mbadge ${p}">${SVG[p]}${p.toUpperCase()}</span>` +
+      `<span class="muser" style="color:${uc};text-shadow:0 0 10px ${uc}88,0 0 2px ${uc}44">${esc(user)}</span>` +
+    `</div>` +
+    `<div class="mtext">${html}</div>`;
+  push(d);
+}
+
+function push(el) {
+  const c = document.getElementById('msgs');
+  const atBot = c.scrollHeight - c.scrollTop - c.clientHeight < 80;
+  c.appendChild(el);
+  while (c.children.length > MAX) c.removeChild(c.firstChild);
+  if (atBot) c.scrollTop = c.scrollHeight;
+}
+
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ────────────────────────── TWITCH IRC ───────────────────────────────────────
+function connectTwitch() {
+  const ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+
+  ws.onopen = () => {
+    ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
+    ws.send('NICK justinfan' + (10000 + Math.floor(Math.random() * 89999)));
+    ws.send('JOIN #' + TW_CH);
+  };
+
+  ws.onmessage = (e) => {
+    for (const line of e.data.split('\r\n')) {
+      if (!line) continue;
+      if (line.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); continue; }
+
+      if (line.includes('End of /NAMES list')) {
+        setOn('tw', true); sys('🟣 Twitch conectado — #' + TW_CH); continue;
+      }
+      if (line.includes('PRIVMSG')) {
+        const tags  = twTags(line);
+        const user  = tags['display-name'] || 'Anônimo';
+        const color = tags['color'] || '';
+        const m     = line.match(/PRIVMSG #\S+ :(.+)$/);
+        if (m) addMsg({ p:'tw', user, color, html: twEmotes(m[1], tags['emotes']) });
+        continue;
+      }
+      if (line.includes('USERNOTICE')) {
+        const tags = twTags(line);
+        const u = tags['display-name'] || 'Alguém';
+        const id = tags['msg-id'] || '';
+        if (id === 'sub' || id === 'resub')
+          sys(`🟣 ${u} assinou na Twitch!`);
+        else if (id === 'subgift' || id === 'anonsubgift')
+          sys(`🟣 ${u} deu um sub na Twitch!`);
+        else if (id === 'raid')
+          sys(`🟣 Raid de ${u} — ${tags['msg-param-viewerCount'] || '?'} viewers!`);
+      }
+    }
+  };
+
+  ws.onclose = () => { setOn('tw', false); setTimeout(connectTwitch, 5000); };
+  ws.onerror = () => ws.close();
+}
+
+function twTags(line) {
+  const raw = line.match(/^@([^ ]+)/)?.[1] ?? '';
+  return Object.fromEntries(
+    raw.split(';').map(t => { const i = t.indexOf('='); return [t.slice(0,i), t.slice(i+1)]; })
+  );
+}
+
+function twEmotes(text, tag) {
+  if (!tag) return esc(text);
+  const reps = [];
+  for (const part of tag.split('/')) {
+    const [id, pos] = part.split(':');
+    if (!pos) continue;
+    for (const p of pos.split(',')) {
+      const [s, e] = p.split('-').map(Number);
+      reps.push({ s, e: e + 1, id });
+    }
+  }
+  if (!reps.length) return esc(text);
+  reps.sort((a, b) => a.s - b.s);
+  let out = '', last = 0;
+  for (const { s, e, id } of reps) {
+    out += esc(text.slice(last, s));
+    const alt = esc(text.slice(s, e));
+    out += `<img src="https://static-cdn.jtvnw.net/emoticons/v2/${id}/default/dark/1.0" alt="${alt}" title="${alt}">`;
+    last = e;
+  }
+  return out + esc(text.slice(last));
+}
+
+// ────────────────────────── KICK (PUSHER) ────────────────────────────────────
+async function connectKick() {
+  // Try to auto-detect chatroom ID
+  if (!S.kiId) {
+    try {
+      const r = await fetch(`https://kick.com/api/v2/channels/${KI_CH}`, { headers: { Accept: 'application/json' } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      S.kiId = String(d.chatroom?.id ?? '');
+      if (S.kiId) lsSet('kiId', S.kiId);
+    } catch (err) {
+      sys('🟢 Kick: detecção automática falhou. Insira o Chatroom ID no setup (tecla C).');
+      return;
+    }
+  }
+
+  if (!S.kiId) { sys('🟢 Kick: sem chatroom ID.'); return; }
+
+  if (typeof Pusher === 'undefined') {
+    sys('🟢 Kick: Pusher não carregou, tentando em 8s...');
+    setTimeout(connectKick, 8000); return;
+  }
+
+  const pusher = new Pusher('32cbd69e4b950bf97679', { cluster: 'us2', forceTLS: true });
+  pusher.connection.bind('connected',    () => { setOn('ki', true);  sys('🟢 Kick conectado — ' + KI_CH); });
+  pusher.connection.bind('disconnected', () => setOn('ki', false));
+  pusher.connection.bind('failed',       () => { setOn('ki', false); sys('🟢 Kick: falha na conexão.'); });
+
+  const ch = pusher.subscribe(`chatrooms.${S.kiId}.v2`);
+
+  ch.bind('App\\Events\\ChatMessageEvent', (data) => {
+    const user  = data.sender?.username ?? data.sender?.slug ?? 'Anônimo';
+    const color = data.sender?.identity?.color ?? '';
+    const text  = data.content ?? '';
+    if (text) addMsg({ p:'ki', user, color, html: esc(text) });
+  });
+  ch.bind('App\\Events\\SubscriptionEvent', (data) => {
+    sys(`🟢 ${data.username ?? 'Alguém'} assinou no Kick!`);
+  });
+  ch.bind('App\\Events\\GiftedSubscriptionsEvent', (data) => {
+    sys(`🟢 ${data.gifted_by ?? 'Alguém'} deu ${data.gifted_usernames?.length ?? 1} sub(s) no Kick!`);
+  });
+}
+
+// ────────────────────────── YOUTUBE ──────────────────────────────────────────
+async function connectYT(videoId) {
+  if (!S.ytKey || !videoId) return;
+  try {
+    // 1 unit — get live chat ID from video
+    const r = await ytGet(`videos?part=liveStreamingDetails&id=${encodeURIComponent(videoId)}`);
+    const chatId = r.items?.[0]?.liveStreamingDetails?.activeLiveChatId;
+    if (!chatId) {
+      sys(`🔴 YouTube: video "${videoId}" não tem chat ao vivo ativo.`);
+      showYTBar();
+      return;
+    }
+    S.ytChatId = chatId; S.ytPage = null;
+    setOn('yt', true);
+    sys('🔴 YouTube conectado — live encontrada!');
+    ytPoll();
+  } catch (e) {
+    sys('🔴 YouTube: erro ao conectar — ' + e.message);
+    showYTBar();
+  }
+}
+
+async function ytPoll() {
+  if (!S.ytChatId) return;
+  try {
+    let path = `liveChat/messages?liveChatId=${S.ytChatId}&part=snippet,authorDetails&maxResults=200`;
+    if (S.ytPage) path += '&pageToken=' + S.ytPage;
+
+    const r = await ytGet(path);
+    const isFirst = !S.ytPage;
+    S.ytPage = r.nextPageToken;
+
+    if (!isFirst && r.items) {
+      for (const item of r.items) {
+        const type = item.snippet?.type ?? '';
+        const user = item.authorDetails?.displayName ?? 'Anônimo';
+        if (type === 'textMessageEvent') {
+          const text = item.snippet?.displayMessage ?? '';
+          if (text) addMsg({ p:'yt', user, color:'', html: esc(text) });
+        } else if (type === 'superChatEvent') {
+          const text   = item.snippet?.superChatDetails?.userComment ?? '';
+          const amount = item.snippet?.superChatDetails?.amountDisplayString ?? '';
+          sys(`🔴 Super Chat de ${esc(user)}: ${esc(amount)}`);
+          if (text) addMsg({ p:'yt', user, color:'#ffcc44', html: esc(text) });
+        } else if (type === 'newSponsorEvent' || type === 'memberMilestoneChatEvent') {
+          sys(`🔴 ${esc(user)} é membro no YouTube!`);
+        }
+      }
+    }
+
+    const interval = Math.max(r.pollingIntervalMillis ?? 5000, 10000);
+    S.ytTimer = setTimeout(ytPoll, interval);
+
+  } catch (e) {
+    if (e.message.includes('quota')) {
+      sys('🔴 YouTube: quota da API excedida. Chat pausado.');
+      setOn('yt', false);
+    } else if (e.message.includes('liveChatEnded') || e.message.includes('notFound') || e.message.includes('404')) {
+      sys('🔴 YouTube: live encerrada. Cole o ID da próxima live (tecla Y).');
+      setOn('yt', false);
+      S.ytChatId = null; S.ytPage = null;
+      showYTBar();
+    } else {
+      sys('🔴 YouTube: erro — ' + e.message + '. Tentando em 15s...');
+      S.ytTimer = setTimeout(ytPoll, 15000);
+    }
+  }
+}
+
+async function ytGet(path) {
+  const sep = path.includes('?') ? '&' : '?';
+  const r   = await fetch('https://www.googleapis.com/youtube/v3/' + path + sep + 'key=' + encodeURIComponent(S.ytKey));
+  const d   = await r.json();
+  if (d.error) throw new Error(d.error.message ?? JSON.stringify(d.error));
+  return d;
+}
+
+// ────────────────────────── HOTKEYS ──────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  // C = full config reset
+  if (e.key === 'c' || e.key === 'C') {
+    if (!document.getElementById('cfg').classList.contains('hidden')) return;
+    try { localStorage.clear(); } catch{}
+    location.reload();
+  }
+  // Y = change YouTube video ID (new live)
+  if (e.key === 'y' || e.key === 'Y') {
+    if (!S.ytOn || !S.ytKey) return;
+    clearTimeout(S.ytTimer);
+    S.ytChatId = null; S.ytPage = null;
+    setOn('yt', false);
+    document.getElementById('yt-vid-in').value = '';
+    showYTBar();
+    sys('🔴 YouTube: aguardando novo video ID...');
+  }
+});
+</script>
+</body>
+</html>
