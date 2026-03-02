@@ -17,9 +17,12 @@ messages.jsonl                — histórico da sessão (zerado a cada start)
 
 ```bash
 pip install aiohttp
-python server.py            # sem YouTube
-python server.py --yt ID    # com YouTube live
+python server.py                                          # canais padrão, sem YouTube
+python server.py --yt VIDEO_ID                           # com YouTube
+python server.py --tw CANAL --ki CANAL --ki-id ID --yt VIDEO_ID  # tudo customizado
 ```
+
+Parâmetros: `--tw` (canal Twitch), `--ki` (canal Kick), `--ki-id` (chatroom ID Kick), `--yt` (video ID YouTube).
 
 URLs no OBS:
 - `http://localhost:8080/xumbrega_multichat.html`
@@ -28,19 +31,23 @@ URLs no OBS:
 ## Constantes importantes (topo do server.py)
 
 ```python
-TW_CH          = 'xumbr3ga'        # canal Twitch
-KI_CH          = 'xumbr3ga'        # canal Kick
-KI_CHATROOM_ID = '45573790'        # ID fixo do chatroom Kick — NÃO buscar via API
-PUSHER_KEY     = '32cbd69e4b950bf97679'  # chave pública do Pusher do Kick
+TW_CH          = 'xumbr3ga'        # canal Twitch — sobrescrito por --tw
+KI_CH          = 'xumbr3ga'        # canal Kick — sobrescrito por --ki
+KI_CHATROOM_ID = '45573790'        # ID fixo do chatroom Kick — sobrescrito por --ki-id
+PUSHER_KEY     = '32cbd69e4b950bf97679'  # chave pública do Pusher do Kick (não muda)
 PUSHER_CLUSTER = 'us2'
 ```
+
+As três primeiras são os valores padrão; em runtime são sobrescritas pelos args de CLI via `argparse`.
 
 ## Decisões de arquitetura
 
 ### Kick — chatroom ID hardcoded
-O `KI_CHATROOM_ID` é fixo e não deve ser buscado via `kick.com/api/v2/channels/{canal}`.
-A API do Kick passa pelo Cloudflare que bloqueia requests Python com 403 (JA3/JA4 TLS fingerprinting).
+O `KI_CHATROOM_ID` é fixo e não deve ser buscado via Python.
+A API do Kick (`kick.com/api/v2/channels/{canal}`) passa pelo Cloudflare que bloqueia requests Python com 403 (JA3/JA4 TLS fingerprinting).
 O Pusher WebSocket (`ws-us2.pusher.com`) não passa pelo Cloudflare e funciona normalmente.
+
+Para obter o chatroom ID de outro canal: abrir `https://kick.com/api/v2/channels/NOME_DO_CANAL` no **browser** e pegar `chatroom.id` do JSON. O ID é permanente.
 
 ### Contador de viewers — removido
 - Kick: bloqueado pelo Cloudflare

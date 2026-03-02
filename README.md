@@ -7,7 +7,7 @@ Overlays feitos pra live — chat multi-plataforma e webcam com chat integrado, 
 ## Arquitetura
 
 ```
-python server.py --yt LIVE_ID
+python server.py [--tw CANAL] [--ki CANAL] [--ki-id ID] [--yt VIDEO_ID]
 
 server.py (hub central)
 ├── Task: Twitch IRC WebSocket
@@ -94,7 +94,37 @@ Para encerrar, pressione `Ctrl+C` — o servidor desconecta todos os clientes SS
 | **Kick** | `--ki` + `--ki-id` (padrão: `xumbr3ga` / `45573790`) | Pusher WebSocket direto (automático) |
 | **YouTube** | `--yt VIDEO_ID` | HTTP polling da live chat (desativado se omitido) |
 
-> O chatroom ID do Kick (`--ki-id`) é fixo por canal e não pode ser buscado via API (bloqueio Cloudflare). Para encontrar o ID de outro canal, inspecione o tráfego WebSocket do Kick no browser.
+> O chatroom ID do Kick (`--ki-id`) é fixo por canal e não pode ser buscado via API em Python (bloqueio Cloudflare). Para encontrar o ID de outro canal, abra no **browser** (não no Python):
+>
+> ```
+> https://kick.com/api/v2/channels/NOME_DO_CANAL
+> ```
+>
+> Procure pelo campo `"chatroom"` → `"id"` no JSON retornado. Exemplo:
+>
+> ```json
+> { "chatroom": { "id": 45573790, ... } }
+> ```
+>
+> Esse ID é permanente — não muda entre lives.
+
+---
+
+## Eventos especiais
+
+Além das mensagens de chat, o servidor detecta e exibe automaticamente eventos de engajamento como mensagens de sistema nos overlays:
+
+| Plataforma | Evento | Exibição |
+|---|---|---|
+| Twitch | Sub / Resub | `🟣 Nick assinou na Twitch!` |
+| Twitch | Subgift | `🟣 Nick deu um sub na Twitch!` |
+| Twitch | Raid | `🟣 Raid de Nick — X viewers!` |
+| Kick | Sub | `🟢 Nick assinou no Kick!` |
+| Kick | Gifted subs | `🟢 Nick deu N sub(s) no Kick!` |
+| YouTube | Super Chat | `🔴 Super Chat de Nick: R$ X` + mensagem com cor dourada |
+| YouTube | Novo membro | `🔴 Nick se tornou membro!` |
+
+Nenhuma configuração adicional é necessária — tudo é detectado automaticamente via IRC/Pusher/polling.
 
 ---
 
