@@ -547,13 +547,20 @@ async def static_handler(request: web.Request) -> web.Response:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 async def main():
-    global _history_lock
+    global _history_lock, TW_CH, KI_CH, KI_CHATROOM_ID
     _history_lock = asyncio.Lock()
 
     parser = argparse.ArgumentParser(description='Xumbr3ga Chat Hub')
-    parser.add_argument('--yt', default='', help='YouTube live video ID')
+    parser.add_argument('--tw',     default='xumbr3ga',  help='Canal Twitch (padrão: xumbr3ga)')
+    parser.add_argument('--ki',     default='xumbr3ga',  help='Canal Kick (padrão: xumbr3ga)')
+    parser.add_argument('--ki-id', default='45573790',  help='Chatroom ID do Kick (padrão: 45573790)')
+    parser.add_argument('--yt',    default='',          help='YouTube live video ID')
     args = parser.parse_args()
-    video_id = args.yt.strip()
+
+    TW_CH          = args.tw.strip()
+    KI_CH          = args.ki.strip()
+    KI_CHATROOM_ID = args.ki_id.strip()
+    video_id       = args.yt.strip()
 
     # Zero history on start
     open(HISTORY_FILE, 'w').close()
