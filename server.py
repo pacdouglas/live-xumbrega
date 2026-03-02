@@ -151,7 +151,7 @@ def _tw_tags(line: str) -> dict:
 # ── Twitch IRC loop ───────────────────────────────────────────────────────────
 
 async def twitch_loop():
-    import random
+    from random import randint
     backoff = 5
     while True:
         connected = False
@@ -159,10 +159,8 @@ async def twitch_loop():
             async with ClientSession() as session:
                 async with session.ws_connect('wss://irc-ws.chat.twitch.tv:443') as ws:
                     await ws.send_str('CAP REQ :twitch.tv/tags twitch.tv/commands')
-                    nick = f'justinfan{10000 + random.randint(0, 89999)}'
-                    await ws.send_str(f'NICK {nick}')
+                    await ws.send_str(f'NICK justinfan{10000 + randint(0, 89999)}')
                     await ws.send_str(f'JOIN #{TW_CH}')
-                    print(f'[tw] conectando como {nick}...', flush=True)
                     async for msg in ws:
                         if msg.type == WSMsgType.TEXT:
                             for line in msg.data.split('\r\n'):
@@ -176,7 +174,7 @@ async def twitch_loop():
                                     backoff = 5
                                     set_status('tw', True)
                                     broadcast({'p': 'sys', 'text': f'🟣 Twitch conectado — #{TW_CH}'})
-                                    print(f'[tw] conectado — #{TW_CH}', flush=True)
+                                    print(f'[tw] conectado — {TW_CH}', flush=True)
                                     continue
                                 if 'PRIVMSG' in line:
                                     tags = _tw_tags(line)
@@ -236,7 +234,6 @@ async def kick_loop():
         try:
             async with ClientSession() as session:
                 chatroom_id = KI_CHATROOM_ID
-                print(f'[ki] chatroom ID: {chatroom_id}', flush=True)
 
                 # Connect to Pusher WebSocket without the Pusher JS lib
                 url = (
