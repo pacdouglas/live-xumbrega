@@ -48,14 +48,27 @@ pip install aiohttp
 ### 2. Inicie o servidor
 
 ```bash
-# Sem YouTube:
+# Mínimo (Twitch + Kick padrão, sem YouTube):
 python server.py
 
 # Com YouTube (passe o Video ID da live):
 python server.py --yt VIDEO_ID
+
+# Canais customizados:
+python server.py --tw outro_canal --ki outro_canal --ki-id CHATROOM_ID --yt VIDEO_ID
 ```
 
+**Parâmetros disponíveis:**
+
+| Parâmetro | Padrão | Descrição |
+|---|---|---|
+| `--tw CANAL` | `xumbr3ga` | Canal Twitch |
+| `--ki CANAL` | `xumbr3ga` | Canal Kick |
+| `--ki-id ID` | `45573790` | Chatroom ID do Kick (fixo por canal) |
+| `--yt VIDEO_ID` | _(desativado)_ | Video ID da live no YouTube |
+
 Mantenha a janela aberta durante toda a live. O servidor zera o histórico a cada start.
+Para encerrar, pressione `Ctrl+C` — o servidor desconecta todos os clientes SSE antes de fechar.
 
 ### 3. Adicione os Browser Sources no OBS
 
@@ -77,11 +90,11 @@ Mantenha a janela aberta durante toda a live. O servidor zera o histórico a cad
 
 | Plataforma | Canal | Como conecta |
 |---|---|---|
-| **Twitch** | `xumbr3ga` | IRC WebSocket anônimo (automático) |
-| **Kick** | `xumbr3ga` | Pusher WebSocket direto com chatroom ID fixo (automático) |
-| **YouTube** | — | HTTP polling da live chat (requer `--yt VIDEO_ID`) |
+| **Twitch** | `--tw` (padrão: `xumbr3ga`) | IRC WebSocket anônimo (automático) |
+| **Kick** | `--ki` + `--ki-id` (padrão: `xumbr3ga` / `45573790`) | Pusher WebSocket direto (automático) |
+| **YouTube** | `--yt VIDEO_ID` | HTTP polling da live chat (desativado se omitido) |
 
-> Para trocar os canais edite as constantes `TW_CH`, `KI_CH` e `KI_CHATROOM_ID` no topo do `server.py`.
+> O chatroom ID do Kick (`--ki-id`) é fixo por canal e não pode ser buscado via API (bloqueio Cloudflare). Para encontrar o ID de outro canal, inspecione o tráfego WebSocket do Kick no browser.
 
 ---
 
