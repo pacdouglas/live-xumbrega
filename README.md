@@ -7,16 +7,19 @@ Overlays feitos pra live — chat multi-plataforma e webcam com chat integrado, 
 ## Arquitetura
 
 ```
-python server.py [--tw CANAL] [--ki CANAL] [--ki-id ID] [--yt VIDEO_ID]
+python server.py
+
+[ dialog tkinter — configura plataformas e canais ]
 
 server.py (hub central)
-├── Task: Twitch IRC WebSocket
-├── Task: Kick Pusher WebSocket
-├── Task: YouTube HTTP polling
+├── Task: Twitch IRC WebSocket       (se habilitado)
+├── Task: Kick Pusher WebSocket      (se habilitado)
+├── Task: YouTube HTTP polling       (se habilitado)
 ├── Task: File watcher (hot-reload, 1s)
-├── messages.jsonl  ← histórico NDJSON, zerado a cada start
+├── config.json     ← configurações persistidas (canais, checkboxes)
+├── messages.jsonl  ← histórico NDJSON persistente (máx 50k msgs)
 ├── GET /events           → SSE ao vivo
-├── GET /events?history=1 → SSE: histórico + ao vivo
+├── GET /events?history=1 → SSE: últimas 500 msgs + ao vivo
 └── GET /*                → arquivos estáticos
 
 multichat.html → EventSource('/events?history=1')
@@ -31,9 +34,12 @@ Os HTMLs são consumidores SSE puros — sem conexão direta nas plataformas, se
 
 | Arquivo | Descrição |
 |---|---|
-| `server.py` | Hub central — conecta nas 3 plataformas, distribui via SSE, salva histórico |
+| `server.py` | Hub central — conecta nas plataformas, distribui via SSE, salva histórico |
 | `xumbrega_multichat.html` | Painel de chat multi-plataforma (Twitch + Kick + YouTube) |
 | `xumbrega_overlay_webcam.html` | Frame da webcam com chat FIFO integrado para o OBS |
+| `config.json` | Configurações persistidas (gerado automaticamente) |
+| `messages.jsonl` | Histórico de mensagens (gerado automaticamente) |
+| `server.lock` | Lock de instância única (gerado automaticamente, apagado ao encerrar) |
 
 ---
 
@@ -48,39 +54,41 @@ pip install aiohttp
 ### 2. Inicie o servidor
 
 ```bash
-# Mínimo (Twitch + Kick padrão, sem YouTube):
 python server.py
-
-# Com YouTube (passe o Video ID da live):
-python server.py --yt VIDEO_ID
-
-# Canais customizados:
-python server.py --tw outro_canal --ki outro_canal --ki-id CHATROOM_ID --yt VIDEO_ID
 ```
 
-**Parâmetros disponíveis:**
+Um **dialog de configuração** abre automaticamente a cada início:
 
-| Parâmetro | Padrão | Descrição |
+| Campo | Persiste? | Descrição |
 |---|---|---|
-| `--tw CANAL` | `xumbr3ga` | Canal Twitch |
-| `--ki CANAL` | `xumbr3ga` | Canal Kick |
-| `--ki-id ID` | `45573790` | Chatroom ID do Kick (fixo por canal) |
-| `--yt VIDEO_ID` | _(desativado)_ | Video ID da live no YouTube |
+| ✅ Twitch (checkbox + canal) | sim | Habilita Twitch e define o canal |
+| ✅ Kick (checkbox + canal + chatroom ID) | sim | Habilita Kick e define canal e ID |
+| ☐ YouTube (checkbox + video ID) | checkbox sim, ID não | Video ID muda a cada live |
+| Porta | sim | Porta HTTP do servidor (padrão: `8080`) |
 
-Mantenha a janela aberta durante toda a live. O servidor zera o histórico a cada start.
+- Campos persistidos em `config.json` — pré-preenchidos na próxima abertura
+- **Resetar padrões** preenche tudo com os dados da xumbr3ga
+- Se nenhuma plataforma estiver marcada ao confirmar, o programa encerra
+- Se um checkbox estiver marcado com campo em branco, mostra erro e volta ao dialog
+
+Mantenha a janela aberta durante toda a live. O histórico persiste entre sessões.
 Para encerrar, pressione `Ctrl+C` — o servidor desconecta todos os clientes SSE antes de fechar.
+
+Apenas uma instância pode rodar por máquina. Tentar abrir uma segunda exibe um erro e encerra.
+
+> **Linux:** requer `python3-tk` (`sudo apt install python3-tk`). No Windows já vem com o Python.
 
 ### 3. Adicione os Browser Sources no OBS
 
 #### Chat completo
 
-- **URL:** `http://localhost:8080/xumbrega_multichat.html`
+- **URL:** `http://localhost:PORTA/xumbrega_multichat.html`
 - **Width:** `400` · **Height:** `1080`
 - Recebe histórico da sessão ao conectar + mensagens ao vivo
 
 #### Overlay da webcam
 
-- **URL:** `http://localhost:8080/xumbrega_overlay_webcam.html`
+- **URL:** `http://localhost:PORTA/xumbrega_overlay_webcam.html`
 - **Width:** `1920` · **Height:** `1080`
 - Só mensagens ao vivo (sem histórico)
 
@@ -90,11 +98,11 @@ Para encerrar, pressione `Ctrl+C` — o servidor desconecta todos os clientes SS
 
 | Plataforma | Canal | Como conecta |
 |---|---|---|
-| **Twitch** | `--tw` (padrão: `xumbr3ga`) | IRC WebSocket anônimo (automático) |
-| **Kick** | `--ki` + `--ki-id` (padrão: `xumbr3ga` / `45573790`) | Pusher WebSocket direto (automático) |
-| **YouTube** | `--yt VIDEO_ID` | HTTP polling da live chat (desativado se omitido) |
+| **Twitch** | canal configurado no dialog | IRC WebSocket anônimo (automático) |
+| **Kick** | canal + chatroom ID configurados no dialog | Pusher WebSocket direto (automático) |
+| **YouTube** | video ID informado no dialog a cada live | HTTP polling da live chat |
 
-> O chatroom ID do Kick (`--ki-id`) é fixo por canal e não pode ser buscado via API em Python (bloqueio Cloudflare). Para encontrar o ID de outro canal, abra no **browser** (não no Python):
+> O chatroom ID do Kick é fixo por canal e não pode ser buscado via API em Python (bloqueio Cloudflare). Para encontrar o ID de outro canal, abra no **browser** (não no Python):
 >
 > ```
 > https://kick.com/api/v2/channels/NOME_DO_CANAL

@@ -10,35 +10,44 @@ Servidor Python que agrega chat ao vivo de Twitch, Kick e YouTube e distribui vi
 server.py                     — hub central asyncio (aiohttp)
 xumbrega_multichat.html       — painel de chat multi-plataforma
 xumbrega_overlay_webcam.html  — overlay da webcam com chat FIFO
+config.json                   — configurações persistidas (gerado automaticamente)
 messages.jsonl                — histórico persistente (máx 50.000 msgs, trim de 40.000 ao estourar — mantém os 10.000 mais recentes)
+server.lock                   — lock de instância única com PID (gerado/apagado automaticamente)
 ```
 
 ## Como rodar
 
 ```bash
 pip install aiohttp
-python server.py                                          # canais padrão, sem YouTube
-python server.py --yt VIDEO_ID                           # com YouTube
-python server.py --tw CANAL --ki CANAL --ki-id ID --yt VIDEO_ID  # tudo customizado
+python server.py
 ```
 
-Parâmetros: `--tw` (canal Twitch), `--ki` (canal Kick), `--ki-id` (chatroom ID Kick), `--yt` (video ID YouTube).
+Ao iniciar, abre um dialog tkinter com:
+- Checkbox + campo canal para Twitch (persiste)
+- Checkbox + campo canal + chatroom ID para Kick (persiste)
+- Checkbox + campo video ID para YouTube (checkbox persiste, ID não — muda por live)
+- Campo porta (persiste, padrão 8080)
 
-URLs no OBS:
-- `http://localhost:8080/xumbrega_multichat.html`
-- `http://localhost:8080/xumbrega_overlay_webcam.html`
+Se nenhuma plataforma marcada → encerra. Campo marcado mas em branco → mostra erro e volta.
+Porta inválida → mostra erro e volta. No Windows tkinter já vem com o Python; no Linux requer `python3-tk`.
+
+URLs no OBS (substitua PORTA pelo valor configurado, padrão 8080):
+- `http://localhost:PORTA/xumbrega_multichat.html`
+- `http://localhost:PORTA/xumbrega_overlay_webcam.html`
 
 ## Constantes importantes (topo do server.py)
 
 ```python
-TW_CH          = 'xumbr3ga'        # canal Twitch — sobrescrito por --tw
-KI_CH          = 'xumbr3ga'        # canal Kick — sobrescrito por --ki
-KI_CHATROOM_ID = '45573790'        # ID fixo do chatroom Kick — sobrescrito por --ki-id
+TW_CH          = 'xumbr3ga'        # canal Twitch — sobrescrito pelo dialog
+KI_CH          = 'xumbr3ga'        # canal Kick — sobrescrito pelo dialog
+KI_CHATROOM_ID = '45573790'        # chatroom ID Kick — sobrescrito pelo dialog
 PUSHER_KEY     = '32cbd69e4b950bf97679'  # chave pública do Pusher do Kick (não muda)
 PUSHER_CLUSTER = 'us2'
 ```
 
-As três primeiras são os valores padrão; em runtime são sobrescritas pelos args de CLI via `argparse`.
+As três primeiras são fallback; em runtime são sobrescritas pelo dialog via `config.json`.
+O `config.json` persiste: `tw_on`, `tw_channel`, `ki_on`, `ki_channel`, `ki_chatroom_id`, `yt_on`, `port`.
+O video ID do YouTube nunca é persistido — informado a cada live no dialog.
 
 ## Decisões de arquitetura
 
@@ -106,6 +115,9 @@ A barra de progresso recebe `animation-duration` por inline style para acompanha
 {"p": "status", "platform": "tw", "on": true}
 {"p": "reload"}
 ```
+
+### Single-instance lock
+`server.lock` contém o PID do processo ativo. Ao iniciar, `acquire_lock()` verifica via `os.kill(pid, 0)` se o processo existe. Se sim → erro + exit. Se não (crash anterior) → lock stale, sobrescreve. O `finally` em `__main__` garante que o lock é apagado ao encerrar, inclusive via `Ctrl+C`.
 
 ## O que NÃO fazer
 

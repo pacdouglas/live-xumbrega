@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 Xumbr3ga Chat Hub — servidor central SSE
-Uso: python server.py --yt LIVE_VIDEO_ID
-Browser Sources:
+Browser Sources (porta configurada no dialog, padrão 8080):
   http://localhost:8080/xumbrega_multichat.html
   http://localhost:8080/xumbrega_overlay_webcam.html
 """
 import asyncio
-import argparse
+import sys
+import os
 import signal
 import json
 import html as html_lib
@@ -24,7 +24,9 @@ PUSHER_KEY = '32cbd69e4b950bf97679'
 PUSHER_CLUSTER = 'us2'
 
 clients: set[asyncio.Queue] = set()
-HISTORY_FILE  = DIR / 'messages.jsonl'
+HISTORY_FILE   = DIR / 'messages.jsonl'
+CONFIG_FILE    = DIR / 'config.json'
+LOCK_FILE      = DIR / 'server.lock'
 HISTORY_LIMIT  = 50_000  # máximo de mensagens no arquivo
 HISTORY_TRIM   = 40_000  # quantas remover quando estoura (mantém 10k)
 HISTORY_REPLAY = 500     # quantas enviar no SSE ao reconectar
@@ -194,20 +196,7 @@ async def twitch_loop():
                                     set_status('tw', True)
                                     broadcast({'p': 'sys', 'text': f'🟣 Twitch conectado — #{TW_CH}'})
                                     print(f'[tw] conectado — {TW_CH}', flush=True)
-                                    continue
-                                if 'PRIVMSG' in line:
-                                    tags = _tw_tags(line)
-                                    user = tags.get('display-name') or 'Anônimo'
-                                    color = tags.get('color') or ''
-                                    m = re.search(r'PRIVMSG #\S+ :(.+)$', line)
-                                    if m:
-                                        rendered = tw_render(m.group(1), tags.get('emotes', ''))
-                                        chat_msg = {'p': 'tw', 'user': user, 'color': color, 'html': rendered}
-                                        print(f'[tw] {user}: {m.group(1)[:60]}', flush=True)
-                                        broadcast(chat_msg)
-                                        await save_message(chat_msg)
-                                    continue
-                                if 'USERNOTICE' in line:
+                                elif 'USERNOTICE' in line:
                                     tags = _tw_tags(line)
                                     u = tags.get('display-name') or 'Alguém'
                                     msg_id = tags.get('msg-id') or ''
@@ -221,6 +210,23 @@ async def twitch_loop():
                                         viewers = tags.get('msg-param-viewerCount', '?')
                                         print(f'[tw] raid de {u} ({viewers} viewers)', flush=True)
                                         broadcast({'p': 'sys', 'text': f'🟣 Raid de {u} — {viewers} viewers!'})
+                                elif 'PRIVMSG' in line:
+                                    tags = _tw_tags(line)
+                                    user = tags.get('display-name') or 'Anônimo'
+                                    color = tags.get('color') or ''
+                                    m = re.search(r'PRIVMSG #\S+ :(.+)$', line)
+                                    if m:
+                                        rendered = tw_render(m.group(1), tags.get('emotes', ''))
+                                        chat_msg = {'p': 'tw', 'user': user, 'color': color, 'html': rendered}
+                                        print(f'[tw] {user}: {m.group(1)[:60]}', flush=True)
+                                        broadcast(chat_msg)
+                                        await save_message(chat_msg)
+                                elif 'NOTICE' in line:
+                                    m = re.search(r'NOTICE \S+ :(.+)$', line)
+                                    if m:
+                                        print(f'[tw] notice: {m.group(1)}', flush=True)
+                                elif re.search(r' 40[36] ', line):
+                                    print(f'[tw] canal inválido ou inexistente: {TW_CH}', flush=True)
                         elif msg.type in (WSMsgType.CLOSED, WSMsgType.ERROR):
                             break
         except Exception as e:
@@ -233,18 +239,6 @@ async def twitch_loop():
 
 
 # ── Kick Pusher loop ──────────────────────────────────────────────────────────
-
-KICK_HEADERS = {
-    'Accept': 'application/json',
-    'User-Agent': (
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    ),
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Referer': 'https://kick.com/',
-    'Origin': 'https://kick.com',
-}
-
 
 async def kick_loop():
     backoff = 5
@@ -278,6 +272,12 @@ async def kick_loop():
                                 set_status('ki', True)
                                 broadcast({'p': 'sys', 'text': f'🟢 Kick conectado — {KI_CH}'})
                                 print(f'[ki] conectado — {KI_CH}', flush=True)
+
+                            elif ename == 'pusher:error':
+                                d = event.get('data') or {}
+                                if isinstance(d, str):
+                                    d = json.loads(d)
+                                print(f'[ki] erro Pusher: {d.get("message", d)}', flush=True)
 
                             elif ename == 'pusher:ping':
                                 await ws.send_str(json.dumps({'event': 'pusher:pong', 'data': {}}))
@@ -526,9 +526,21 @@ async def events_handler(request: web.Request) -> web.StreamResponse:
         await resp.write(f'data: {status_msg}\n\n'.encode())
 
     # Subscribe to live broadcasts
+    ua_raw = request.headers.get('User-Agent', '')
+    if 'OBS' in ua_raw:
+        client_id = 'OBS'
+    elif 'Firefox' in ua_raw:
+        client_id = 'Firefox'
+    elif 'Chrome' in ua_raw:
+        client_id = 'Chrome'
+    elif ua_raw:
+        client_id = ua_raw[:30]
+    else:
+        client_id = 'desconhecido'
+
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
     clients.add(q)
-    print(f'[sse] cliente conectado (history={want_history}, total={len(clients)})', flush=True)
+    print(f'[sse] conectado — {client_id} | history={want_history} | total={len(clients)}', flush=True)
     try:
         while True:
             try:
@@ -544,7 +556,7 @@ async def events_handler(request: web.Request) -> web.StreamResponse:
         pass
     finally:
         clients.discard(q)
-        print(f'[sse] cliente desconectado (total={len(clients)})', flush=True)
+        print(f'[sse] desconectado — {client_id} | total={len(clients)}', flush=True)
     return resp
 
 
@@ -553,7 +565,7 @@ async def events_handler(request: web.Request) -> web.StreamResponse:
 async def static_handler(request: web.Request) -> web.Response:
     path = request.match_info.get('path', '') or 'xumbrega_multichat.html'
     fpath = (DIR / path).resolve()
-    if not str(fpath).startswith(str(DIR)):
+    if not fpath.is_relative_to(DIR):
         raise web.HTTPForbidden()
     if not fpath.is_file():
         raise web.HTTPNotFound()
@@ -565,23 +577,218 @@ async def static_handler(request: web.Request) -> web.Response:
     return web.Response(body=data, content_type=mime or 'application/octet-stream', charset=charset)
 
 
+# ── Single-instance lock ──────────────────────────────────────────────────────
+
+def acquire_lock() -> bool:
+    """Tenta adquirir o lock. Retorna False se outra instância estiver rodando."""
+    if LOCK_FILE.exists():
+        try:
+            pid = int(LOCK_FILE.read_text().strip())
+            os.kill(pid, 0)  # sinal 0 só verifica existência do processo
+            return False     # processo existe — outra instância ativa
+        except OSError:
+            pass  # lock stale — processo morreu, pode sobrescrever
+    LOCK_FILE.write_text(str(os.getpid()))
+    return True
+
+
+def release_lock():
+    try:
+        if LOCK_FILE.exists() and int(LOCK_FILE.read_text().strip()) == os.getpid():
+            LOCK_FILE.unlink()
+    except Exception:
+        pass
+
+
+# ── Config persist ────────────────────────────────────────────────────────────
+
+def load_config() -> dict:
+    try:
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE, encoding='utf-8') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def save_config(data: dict):
+    try:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f'[config] erro ao salvar: {e}', flush=True)
+
+
+# ── Startup dialog ─────────────────────────────────────────────────────────────
+
+def ask_startup_config() -> dict | None:
+    """
+    Abre dialog de configuração da live.
+    Retorna dict com as opções, ou None se nenhuma plataforma foi selecionada.
+    """
+    try:
+        import tkinter as tk
+        cfg = load_config()
+        result = [None]
+
+        root = tk.Tk()
+        root.title('Configurar Live')
+        root.resizable(False, False)
+        root.lift()
+        root.focus_force()
+
+        # ── Twitch ──
+        tw_on = tk.BooleanVar(value=cfg.get('tw_on', True))
+        tw_ch = tk.StringVar(value=cfg.get('tw_channel', 'xumbr3ga'))
+
+        tw_frame = tk.Frame(root)
+        tw_frame.pack(fill='x', padx=16, pady=(12, 2))
+        tk.Checkbutton(tw_frame, text='Twitch', variable=tw_on,
+                       width=7, anchor='w').pack(side='left')
+        tk.Label(tw_frame, text='canal:').pack(side='left', padx=(8, 2))
+        tk.Entry(tw_frame, textvariable=tw_ch, width=22).pack(side='left')
+
+        tk.Frame(root, height=1, bg='#cccccc').pack(fill='x', padx=16, pady=8)
+
+        # ── Kick ──
+        ki_on = tk.BooleanVar(value=cfg.get('ki_on', True))
+        ki_ch = tk.StringVar(value=cfg.get('ki_channel', 'xumbr3ga'))
+        ki_id = tk.StringVar(value=cfg.get('ki_chatroom_id', '45573790'))
+
+        ki_frame = tk.Frame(root)
+        ki_frame.pack(fill='x', padx=16, pady=2)
+        tk.Checkbutton(ki_frame, text='Kick', variable=ki_on,
+                       width=7, anchor='w').pack(side='left')
+        tk.Label(ki_frame, text='canal:').pack(side='left', padx=(8, 2))
+        tk.Entry(ki_frame, textvariable=ki_ch, width=22).pack(side='left')
+
+        ki_id_frame = tk.Frame(root)
+        ki_id_frame.pack(fill='x', padx=16, pady=(0, 2))
+        tk.Label(ki_id_frame, text='         chatroom ID:').pack(side='left', padx=(8, 2))
+        tk.Entry(ki_id_frame, textvariable=ki_id, width=22).pack(side='left')
+        tk.Label(root,
+                 text='         abra kick.com/api/v2/channels/CANAL no browser → campo "chatroom.id"',
+                 fg='gray', font=('TkDefaultFont', 8), anchor='w').pack(fill='x', padx=16, pady=(0, 4))
+
+        # ── Separator ──
+        tk.Frame(root, height=1, bg='#cccccc').pack(fill='x', padx=16, pady=8)
+
+        # ── YouTube ──
+        yt_on = tk.BooleanVar(value=cfg.get('yt_on', False))
+        yt_id = tk.StringVar(value='')  # nunca persiste — muda a cada live
+
+        yt_frame = tk.Frame(root)
+        yt_frame.pack(fill='x', padx=16, pady=2)
+        tk.Checkbutton(yt_frame, text='YouTube', variable=yt_on,
+                       width=7, anchor='w').pack(side='left')
+        tk.Label(yt_frame, text='video ID:').pack(side='left', padx=(8, 2))
+        tk.Entry(yt_frame, textvariable=yt_id, width=22).pack(side='left')
+
+        tk.Label(root, text='ex: youtube.com/watch?v=Fpfdw0iXuv8  (o código após "v=")',
+                 fg='gray', font=('TkDefaultFont', 8)).pack(padx=16, pady=(0, 8))
+
+        # ── Porta ──
+        tk.Frame(root, height=1, bg='#cccccc').pack(fill='x', padx=16, pady=8)
+
+        port_val = tk.StringVar(value=str(cfg.get('port', 8080)))
+        port_frame = tk.Frame(root)
+        port_frame.pack(fill='x', padx=16, pady=(0, 8))
+        tk.Label(port_frame, text='Porta:', width=9, anchor='w').pack(side='left')
+        tk.Entry(port_frame, textvariable=port_val, width=8).pack(side='left')
+
+        # ── OK ──
+        def confirm(e=None):
+            from tkinter import messagebox
+            has_tw = tw_on.get()
+            has_ki = ki_on.get()
+            has_yt = yt_on.get()
+
+            if has_tw and not tw_ch.get().strip():
+                messagebox.showerror('Erro', 'Twitch marcado mas canal em branco.')
+                return
+            if has_ki and not ki_ch.get().strip():
+                messagebox.showerror('Erro', 'Kick marcado mas canal em branco.')
+                return
+            if has_ki and not ki_id.get().strip():
+                messagebox.showerror('Erro', 'Kick marcado mas chatroom ID em branco.')
+                return
+            if has_yt and not yt_id.get().strip():
+                messagebox.showerror('Erro', 'YouTube marcado mas video ID em branco.')
+                return
+            if not has_tw and not has_ki and not has_yt:
+                root.destroy()
+                return  # result stays None
+            try:
+                port = int(port_val.get().strip())
+                if not (1 <= port <= 65535):
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror('Erro', 'Porta inválida. Use um número entre 1 e 65535.')
+                return
+
+            result[0] = {
+                'tw':         has_tw,
+                'tw_channel': tw_ch.get().strip(),
+                'ki':         has_ki,
+                'ki_channel': ki_ch.get().strip(),
+                'ki_id':      ki_id.get().strip(),
+                'yt':         yt_id.get().strip() if has_yt else '',
+                'port':       port,
+            }
+            save_config({
+                'tw_on':          has_tw,
+                'tw_channel':     result[0]['tw_channel'],
+                'ki_on':          has_ki,
+                'ki_channel':     result[0]['ki_channel'],
+                'ki_chatroom_id': result[0]['ki_id'],
+                'yt_on':          has_yt,
+                'port':           port,
+            })
+            root.destroy()
+
+        def reset_defaults():
+            tw_on.set(True);  tw_ch.set('xumbr3ga')
+            ki_on.set(True);  ki_ch.set('xumbr3ga'); ki_id.set('45573790')
+            yt_on.set(False); yt_id.set('')
+            port_val.set('8080')
+
+        btn_frame = tk.Frame(root)
+        btn_frame.pack(pady=(0, 12))
+        tk.Button(btn_frame, text='Resetar padrões', command=reset_defaults).pack(side='left', padx=(0, 8))
+        tk.Button(btn_frame, text='OK', width=12, command=confirm).pack(side='left')
+
+        root.bind('<Return>', confirm)
+        root.protocol('WM_DELETE_WINDOW', root.destroy)  # X = cancelar, não sobe
+
+        root.mainloop()
+        return result[0]
+
+    except Exception as e:
+        print(f'[startup] dialog indisponível ({e}) — usando config salva ou padrões', flush=True)
+        cfg = load_config()
+        return {
+            'tw':         cfg.get('tw_on', True),
+            'tw_channel': cfg.get('tw_channel', 'xumbr3ga'),
+            'ki':         cfg.get('ki_on', True),
+            'ki_channel': cfg.get('ki_channel', 'xumbr3ga'),
+            'ki_id':      cfg.get('ki_chatroom_id', '45573790'),
+            'yt':         '',
+            'port':       cfg.get('port', 8080),
+        }
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-async def main():
+async def main(cfg: dict):
     global _history_lock, TW_CH, KI_CH, KI_CHATROOM_ID, _msg_count
     _history_lock = asyncio.Lock()
 
-    parser = argparse.ArgumentParser(description='Xumbr3ga Chat Hub')
-    parser.add_argument('--tw',     default='xumbr3ga',  help='Canal Twitch (padrão: xumbr3ga)')
-    parser.add_argument('--ki',     default='xumbr3ga',  help='Canal Kick (padrão: xumbr3ga)')
-    parser.add_argument('--ki-id', default='45573790',  help='Chatroom ID do Kick (padrão: 45573790)')
-    parser.add_argument('--yt',    default='',          help='YouTube live video ID')
-    args = parser.parse_args()
-
-    TW_CH          = args.tw.strip()
-    KI_CH          = args.ki.strip()
-    KI_CHATROOM_ID = args.ki_id.strip()
-    video_id       = args.yt.strip()
+    TW_CH          = cfg['tw_channel']
+    KI_CH          = cfg['ki_channel']
+    KI_CHATROOM_ID = cfg['ki_id']
+    video_id       = cfg['yt']
+    port           = cfg['port']
 
     # Inicializa contador com número real de linhas existentes
     if HISTORY_FILE.exists():
@@ -596,7 +803,7 @@ async def main():
 
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, 'localhost', 8080)
+    site = web.TCPSite(runner, 'localhost', port)
     await site.start()
 
     W = 66
@@ -605,29 +812,34 @@ async def main():
     print(f'  ╔{"═"*W}╗')
     print(h('       Xumbr3ga Chat Hub — Servidor ativo'))
     print(f'  ╠{"═"*W}╣')
-    print(h('  Multi Chat:  http://localhost:8080/xumbrega_multichat.html'))
-    print(h('  Overlay:     http://localhost:8080/xumbrega_overlay_webcam.html'))
+    print(h(f'  Multi Chat:  http://localhost:{port}/xumbrega_multichat.html'))
+    print(h(f'  Overlay:     http://localhost:{port}/xumbrega_overlay_webcam.html'))
+    if cfg['tw']:
+        print(h(f'  Twitch:      #{TW_CH}'))
+    if cfg['ki']:
+        print(h(f'  Kick:        {KI_CH}'))
     if video_id:
         print(h(f'  YouTube ID:  {video_id}'))
-    else:
-        print(h('  YouTube:     desativado'))
-        print(h('  Para ativar: python server.py --yt VIDEO_ID'))
-        print(h('  Ex:          python server.py --yt Fpfdw0iXuv8'))
     print(f'  ╠{"═"*W}╣')
     print(h('  Mantenha esta janela aberta durante a live'))
     print(f'  ╚{"═"*W}╝')
     print()
 
-    asyncio.create_task(twitch_loop())
-    asyncio.create_task(kick_loop())
+    if cfg['tw']:
+        asyncio.create_task(twitch_loop())
+    if cfg['ki']:
+        asyncio.create_task(kick_loop())
     if video_id:
         asyncio.create_task(youtube_loop(video_id))
     asyncio.create_task(file_watcher_loop())
 
     stop = asyncio.Event()
     loop = asyncio.get_event_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop.set)
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stop.set)
+    except NotImplementedError:
+        pass  # Windows — Ctrl+C encerra via KeyboardInterrupt normalmente
 
     await stop.wait()
 
@@ -658,5 +870,24 @@ async def main():
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
-    print('Servidor encerrado.')
+    if not acquire_lock():
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror('Servidor já rodando', 'Já existe uma instância do servidor rodando nesta máquina.')
+            root.destroy()
+        except Exception:
+            print('ERRO: Já existe uma instância do servidor rodando nesta máquina.')
+        sys.exit(1)
+
+    try:
+        cfg = ask_startup_config()
+        if cfg is None:
+            print('Nenhuma plataforma selecionada. Encerrando.')
+            sys.exit(0)
+        asyncio.run(main(cfg))
+        print('Servidor encerrado.')
+    finally:
+        release_lock()
