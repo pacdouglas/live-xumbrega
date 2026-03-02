@@ -18,6 +18,7 @@ from aiohttp import web, ClientSession, WSMsgType
 DIR = Path(__file__).parent
 TW_CH = 'xumbr3ga'
 KI_CH = 'xumbr3ga'
+KI_CHATROOM_ID = '45573790'
 PUSHER_KEY = '32cbd69e4b950bf97679'
 PUSHER_CLUSTER = 'us2'
 
@@ -226,19 +227,8 @@ async def kick_loop():
     while True:
         try:
             async with ClientSession() as session:
-                # Get chatroom ID
-                async with session.get(
-                    f'https://kick.com/api/v2/channels/{KI_CH}',
-                    headers=KICK_HEADERS
-                ) as r:
-                    if not r.ok:
-                        raise Exception(f'HTTP {r.status}')
-                    data = await r.json(content_type=None)
-                    chatroom_id = str((data.get('chatroom') or {}).get('id', ''))
-                    print(f'[ki] chatroom ID: {chatroom_id}', flush=True)
-
-                if not chatroom_id:
-                    raise Exception('chatroom ID não encontrado')
+                chatroom_id = KI_CHATROOM_ID
+                print(f'[ki] chatroom ID: {chatroom_id}', flush=True)
 
                 # Connect to Pusher WebSocket without the Pusher JS lib
                 url = (
@@ -457,17 +447,8 @@ async def viewers_loop(video_id: str):
         tw_count = ki_count = yt_count = 0
         try:
             async with ClientSession() as session:
-                # Kick
-                try:
-                    async with session.get(
-                        f'https://kick.com/api/v2/channels/{KI_CH}',
-                        headers=KICK_HEADERS
-                    ) as r:
-                        if r.ok:
-                            d = await r.json(content_type=None)
-                            ki_count = int(d.get('viewer_count') or 0)
-                except Exception as e:
-                    print(f'[viewers/ki] {e}', flush=True)
+                # Kick — viewer count indisponível sem bypass de Cloudflare
+                ki_count = 0
 
                 # YouTube
                 if video_id:
