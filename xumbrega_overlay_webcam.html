@@ -261,6 +261,7 @@ window.addEventListener('load', () => {
   const es = new EventSource('/events');  // sem history — só ao vivo
   es.onmessage = ({ data }) => {
     const msg = JSON.parse(data);
+    if (msg.p === 'reload')  { window.location.reload(); return; }
     if (msg.p === 'status' || msg.p === 'sys' || msg.p === 'viewers') return;
     addMsg(msg);
   };

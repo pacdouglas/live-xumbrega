@@ -203,6 +203,7 @@ window.addEventListener('load', () => {
   const es = new EventSource('/events?history=1');
   es.onmessage = ({ data }) => {
     const msg = JSON.parse(data);
+    if (msg.p === 'reload')  { window.location.reload(); return; }
     if (msg.p === 'status')  { setOn(msg.platform, msg.on); return; }
     if (msg.p === 'sys')     { sys(msg.text); return; }
     if (msg.p === 'viewers') {

@@ -3,7 +3,7 @@
 Xumbr3ga Chat Hub — servidor central SSE
 Uso: python server.py --yt LIVE_VIDEO_ID
 Browser Sources:
-  http://localhost:8080/xumbr3ga-multichat.html
+  http://localhost:8080/xumbrega_multichat.html
   http://localhost:8080/xumbrega_overlay_webcam.html
 """
 import asyncio
@@ -439,6 +439,30 @@ async def _yt_handle_action(action: dict):
         broadcast({'p': 'sys', 'text': f'🔴 {esc(user)} se tornou membro!'})
 
 
+# ── File watcher (hot-reload) ─────────────────────────────────────────────────
+
+async def file_watcher_loop():
+    """Detecta mudanças nos .html e manda reload SSE para todos os clientes."""
+    mtimes: dict[Path, float] = {}
+    for f in DIR.glob('*.html'):
+        try:
+            mtimes[f] = f.stat().st_mtime
+        except OSError:
+            pass
+
+    while True:
+        await asyncio.sleep(1)
+        for f in DIR.glob('*.html'):
+            try:
+                mtime = f.stat().st_mtime
+                if f in mtimes and mtimes[f] != mtime:
+                    print(f'[watcher] {f.name} modificado — recarregando clientes', flush=True)
+                    broadcast({'p': 'reload'})
+                mtimes[f] = mtime
+            except OSError:
+                pass
+
+
 # ── Viewers polling loop ──────────────────────────────────────────────────────
 
 async def viewers_loop(video_id: str):
@@ -538,7 +562,7 @@ async def events_handler(request: web.Request) -> web.StreamResponse:
 # ── Static file handler ───────────────────────────────────────────────────────
 
 async def static_handler(request: web.Request) -> web.Response:
-    path = request.match_info.get('path', '') or 'xumbr3ga-multichat.html'
+    path = request.match_info.get('path', '') or 'xumbrega_multichat.html'
     fpath = (DIR / path).resolve()
     if not str(fpath).startswith(str(DIR)):
         raise web.HTTPForbidden()
@@ -575,21 +599,23 @@ async def main():
     site = web.TCPSite(runner, 'localhost', 8080)
     await site.start()
 
+    W = 66
+    h = lambda s: f'  ║{s:<{W}}║'
     print()
-    print('  ╔══════════════════════════════════════════════════════╗')
-    print('  ║       Xumbr3ga Chat Hub — Servidor ativo             ║')
-    print('  ╠══════════════════════════════════════════════════════╣')
-    print('  ║  Multi Chat:  http://localhost:8080/xumbr3ga-multichat.html      ║')
-    print('  ║  Overlay:     http://localhost:8080/xumbrega_overlay_webcam.html ║')
+    print(f'  ╔{"═"*W}╗')
+    print(h('       Xumbr3ga Chat Hub — Servidor ativo'))
+    print(f'  ╠{"═"*W}╣')
+    print(h('  Multi Chat:  http://localhost:8080/xumbrega_multichat.html'))
+    print(h('  Overlay:     http://localhost:8080/xumbrega_overlay_webcam.html'))
     if video_id:
-        print(f'  ║  YouTube ID:  {video_id:<40} ║')
+        print(h(f'  YouTube ID:  {video_id}'))
     else:
-        print('  ║  YouTube:     desativado                                            ║')
-        print('  ║  Para ativar: python server.py --yt VIDEO_ID                        ║')
-        print('  ║  Ex:          python server.py --yt Fpfdw0iXuv8                     ║')
-    print('  ╠══════════════════════════════════════════════════════╣')
-    print('  ║  Mantenha esta janela aberta durante a live          ║')
-    print('  ╚══════════════════════════════════════════════════════╝')
+        print(h('  YouTube:     desativado'))
+        print(h('  Para ativar: python server.py --yt VIDEO_ID'))
+        print(h('  Ex:          python server.py --yt Fpfdw0iXuv8'))
+    print(f'  ╠{"═"*W}╣')
+    print(h('  Mantenha esta janela aberta durante a live'))
+    print(f'  ╚{"═"*W}╝')
     print()
 
     asyncio.create_task(twitch_loop())
@@ -597,6 +623,7 @@ async def main():
     if video_id:
         asyncio.create_task(youtube_loop(video_id))
     asyncio.create_task(viewers_loop(video_id))
+    asyncio.create_task(file_watcher_loop())
 
     try:
         await asyncio.Event().wait()
