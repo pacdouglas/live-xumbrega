@@ -24,9 +24,13 @@ PUSHER_KEY = '32cbd69e4b950bf97679'
 PUSHER_CLUSTER = 'us2'
 
 clients: set[asyncio.Queue] = set()
-HISTORY_FILE = DIR / 'messages.jsonl'
+HISTORY_FILE  = DIR / 'messages.jsonl'
+HISTORY_LIMIT  = 50_000  # máximo de mensagens no arquivo
+HISTORY_TRIM   = 40_000  # quantas remover quando estoura (mantém 10k)
+HISTORY_REPLAY = 500     # quantas enviar no SSE ao reconectar
 platform_status = {'tw': False, 'ki': False, 'yt': False}
 _history_lock: asyncio.Lock | None = None  # initialized in main()
+_msg_count = 0
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -51,15 +55,29 @@ def broadcast(msg: dict):
 
 
 async def save_message(msg: dict):
-    """Append a chat message as one NDJSON line."""
+    """Append a chat message as one NDJSON line, keeping at most HISTORY_LIMIT lines."""
+    global _msg_count
     line = json.dumps(msg, ensure_ascii=False) + '\n'
     async with _history_lock:
         await asyncio.to_thread(_append_line, line)
+        _msg_count += 1
+        if _msg_count > HISTORY_LIMIT:
+            await asyncio.to_thread(_trim_history, HISTORY_TRIM)
+            _msg_count -= HISTORY_TRIM
+            print(f'[history] limite atingido — {HISTORY_TRIM} mensagens antigas removidas (total: {_msg_count})', flush=True)
 
 
 def _append_line(line: str):
     with open(HISTORY_FILE, 'a', encoding='utf-8') as f:
         f.write(line)
+
+
+def _trim_history(n: int):
+    """Remove as primeiras n linhas do arquivo de histórico."""
+    with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+        f.writelines(lines[n:])
 
 
 def set_status(p: str, on: bool):
@@ -492,12 +510,12 @@ async def events_handler(request: web.Request) -> web.StreamResponse:
     })
     await resp.prepare(request)
 
-    # Stream history line by line without loading the whole file
+    # Stream last HISTORY_REPLAY lines of history
     if want_history:
         def read_lines():
             if HISTORY_FILE.exists():
                 with open(HISTORY_FILE, encoding='utf-8') as f:
-                    return [l.strip() for l in f if l.strip()]
+                    return [l.strip() for l in f if l.strip()][-HISTORY_REPLAY:]
             return []
         for line in await asyncio.to_thread(read_lines):
             await resp.write(f'data: {line}\n\n'.encode())
@@ -550,7 +568,7 @@ async def static_handler(request: web.Request) -> web.Response:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 async def main():
-    global _history_lock, TW_CH, KI_CH, KI_CHATROOM_ID
+    global _history_lock, TW_CH, KI_CH, KI_CHATROOM_ID, _msg_count
     _history_lock = asyncio.Lock()
 
     parser = argparse.ArgumentParser(description='Xumbr3ga Chat Hub')
@@ -565,8 +583,12 @@ async def main():
     KI_CHATROOM_ID = args.ki_id.strip()
     video_id       = args.yt.strip()
 
-    # Zero history on start
-    open(HISTORY_FILE, 'w').close()
+    # Inicializa contador com número real de linhas existentes
+    if HISTORY_FILE.exists():
+        with open(HISTORY_FILE, encoding='utf-8') as f:
+            _msg_count = sum(1 for line in f if line.strip())
+    else:
+        _msg_count = 0
 
     app = web.Application()
     app.router.add_get('/events', events_handler)

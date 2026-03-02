@@ -10,7 +10,7 @@ Servidor Python que agrega chat ao vivo de Twitch, Kick e YouTube e distribui vi
 server.py                     — hub central asyncio (aiohttp)
 xumbrega_multichat.html       — painel de chat multi-plataforma
 xumbrega_overlay_webcam.html  — overlay da webcam com chat FIFO
-messages.jsonl                — histórico da sessão (zerado a cada start)
+messages.jsonl                — histórico persistente (máx 50.000 msgs, trim de 40.000 ao estourar — mantém os 10.000 mais recentes)
 ```
 
 ## Como rodar

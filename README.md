@@ -170,7 +170,8 @@ Isso cria o efeito de scroll rápido durante picos de chat (ex: galera spamando 
 ## Histórico de mensagens
 
 - Salvo em `messages.jsonl` (NDJSON, uma linha por mensagem)
-- Zerado automaticamente a cada `python server.py`
+- **Persiste entre sessões** — ao iniciar uma nova live os comentários anteriores já estão disponíveis no multichat
+- Limite de **50.000 mensagens** — ao estourar, mantém apenas as 10.000 mais recentes
 - Apenas mensagens de chat são salvas (sys e status não)
 - O multichat replaya o histórico ao conectar/reconectar
 
