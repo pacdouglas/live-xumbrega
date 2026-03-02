@@ -152,7 +152,9 @@ def _tw_tags(line: str) -> dict:
 
 async def twitch_loop():
     import random
+    backoff = 5
     while True:
+        connected = False
         try:
             async with ClientSession() as session:
                 async with session.ws_connect('wss://irc-ws.chat.twitch.tv:443') as ws:
@@ -170,6 +172,8 @@ async def twitch_loop():
                                     await ws.send_str('PONG :tmi.twitch.tv')
                                     continue
                                 if 'End of /NAMES list' in line:
+                                    connected = True
+                                    backoff = 5
                                     set_status('tw', True)
                                     broadcast({'p': 'sys', 'text': f'🟣 Twitch conectado — #{TW_CH}'})
                                     print(f'[tw] conectado — #{TW_CH}', flush=True)
@@ -204,9 +208,11 @@ async def twitch_loop():
                             break
         except Exception as e:
             print(f'[tw] erro: {e}', flush=True)
-        print('[tw] desconectado, reconectando em 5s...', flush=True)
         set_status('tw', False)
-        await asyncio.sleep(5)
+        print(f'[tw] desconectado, reconectando em {backoff}s...', flush=True)
+        await asyncio.sleep(backoff)
+        if not connected:
+            backoff = min(backoff * 2, 60)
 
 
 # ── Kick Pusher loop ──────────────────────────────────────────────────────────
@@ -224,7 +230,9 @@ KICK_HEADERS = {
 
 
 async def kick_loop():
+    backoff = 5
     while True:
+        connected = False
         try:
             async with ClientSession() as session:
                 chatroom_id = KI_CHATROOM_ID
@@ -249,6 +257,8 @@ async def kick_loop():
                                 await ws.send_str(sub)
 
                             elif ename == 'pusher_internal:subscription_succeeded':
+                                connected = True
+                                backoff = 5
                                 set_status('ki', True)
                                 broadcast({'p': 'sys', 'text': f'🟢 Kick conectado — {KI_CH}'})
                                 print(f'[ki] conectado — {KI_CH}', flush=True)
@@ -292,9 +302,11 @@ async def kick_loop():
 
         except Exception as e:
             print(f'[ki] erro: {e}', flush=True)
-        print('[ki] desconectado, reconectando em 5s...', flush=True)
         set_status('ki', False)
-        await asyncio.sleep(5)
+        print(f'[ki] desconectado, reconectando em {backoff}s...', flush=True)
+        await asyncio.sleep(backoff)
+        if not connected:
+            backoff = min(backoff * 2, 60)
 
 
 # ── YouTube polling loop ──────────────────────────────────────────────────────
@@ -314,6 +326,7 @@ async def youtube_loop(video_id: str):
 
     # Extract initial continuation token
     continuation = None
+    err_backoff = 5
     while not continuation:
         try:
             async with ClientSession() as session:
@@ -328,8 +341,9 @@ async def youtube_loop(video_id: str):
                     if not continuation:
                         raise Exception('continuation token não encontrado')
         except Exception as e:
-            print(f'[yt] connect error: {e}', flush=True)
-            await asyncio.sleep(10)
+            print(f'[yt] connect error: {e} — tentando em {err_backoff}s', flush=True)
+            await asyncio.sleep(err_backoff)
+            err_backoff = min(err_backoff * 2, 60)
 
     set_status('yt', True)
     broadcast({'p': 'sys', 'text': '🔴 YouTube conectado!'})
@@ -337,6 +351,7 @@ async def youtube_loop(video_id: str):
 
     is_first = True
     backoff = 0
+    err_backoff = 5
 
     while True:
         try:
@@ -384,6 +399,7 @@ async def youtube_loop(video_id: str):
                     await _yt_handle_action(action)
             is_first = False
             backoff = 0
+            err_backoff = 5
             await asyncio.sleep(min(poll_ms, 2000) / 1000)
 
         except Exception as e:
@@ -391,8 +407,9 @@ async def youtube_loop(video_id: str):
                 set_status('yt', False)
                 broadcast({'p': 'sys', 'text': '🔴 YouTube: live encerrada.'})
                 return
-            print(f'[yt] poll error: {e}', flush=True)
-            await asyncio.sleep(8)
+            print(f'[yt] poll error: {e} — tentando em {err_backoff}s', flush=True)
+            await asyncio.sleep(err_backoff)
+            err_backoff = min(err_backoff * 2, 60)
 
 
 def _yt_extract_token(html: str) -> str:
