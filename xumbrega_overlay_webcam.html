@@ -148,9 +148,10 @@ const SVG = {
 };
 
 // ── FIFO QUEUE ─────────────────────────────────────────────────────────────────
-const DISPLAY_MS = 4000;
+const MAX_MS  = 4000;
+const MIN_MS  = 300;
 const queue   = [];
-const display = []; // [{msg, showTime}]
+const display = []; // [{msg, showTime, duration}]
 let tickTimer = null;
 let msgSeq    = 0;          // chave única por mensagem
 let slot0Key  = null;       // chave atual no slot 0
@@ -158,6 +159,11 @@ let slot1Key  = null;       // chave atual no slot 1
 
 const slot0 = document.getElementById('chat-slot-0');
 const slot1 = document.getElementById('chat-slot-1');
+
+// Duração dinâmica: quanto mais fila, mais rápido drena (mín 300ms, máx 4s)
+function getDisplayMs() {
+  return Math.max(MIN_MS, Math.floor(MAX_MS / (queue.length + 1)));
+}
 
 function addMsg({ p, user, color, html }) {
   if (!html?.trim()) return;
@@ -170,7 +176,7 @@ function addMsg({ p, user, color, html }) {
 function tryFill() {
   const wasEmpty = display.length === 0;
   while (display.length < 2 && queue.length > 0)
-    display.push({ msg: queue.shift(), showTime: Date.now() });
+    display.push({ msg: queue.shift(), showTime: Date.now(), duration: getDisplayMs() });
   render();
   if (wasEmpty && display.length > 0) scheduleNext();
 }
@@ -179,7 +185,7 @@ function scheduleNext() {
   clearTimeout(tickTimer);
   if (!display.length) return;
   const elapsed   = Date.now() - display[0].showTime;
-  const remaining = Math.max(0, DISPLAY_MS - elapsed);
+  const remaining = Math.max(0, display[0].duration - elapsed);
   tickTimer = setTimeout(tick, remaining);
 }
 
@@ -187,9 +193,8 @@ function tick() {
   animOut(slot0, () => {
     slot0Key = null; // slot0 esvaziado — força re-render na próxima chamada
     display.shift();
-    // showTime é preservado — a barra continua de onde estava ao subir pro slot0
     if (display.length < 2 && queue.length > 0)
-      display.push({ msg: queue.shift(), showTime: Date.now() });
+      display.push({ msg: queue.shift(), showTime: Date.now(), duration: getDisplayMs() });
     render();
     if (display.length) scheduleNext();
   });
@@ -199,16 +204,16 @@ function render() {
   // Só atualiza o slot se a mensagem mudou — evita re-animação desnecessária
   const key0 = display[0]?.msg.key ?? null;
   const key1 = display[1]?.msg.key ?? null;
-  if (key0 !== slot0Key) { renderSlot(slot0, display[0]?.msg ?? null, display[0]?.showTime ?? null); slot0Key = key0; }
-  if (key1 !== slot1Key) { renderSlot(slot1, display[1]?.msg ?? null, display[1]?.showTime ?? null); slot1Key = key1; }
+  if (key0 !== slot0Key) { renderSlot(slot0, display[0] ?? null); slot0Key = key0; }
+  if (key1 !== slot1Key) { renderSlot(slot1, display[1] ?? null); slot1Key = key1; }
 }
 
-function renderSlot(el, msg, showTime) {
-  if (!msg) { el.classList.add('hidden'); el.innerHTML = ''; return; }
-  const elapsed = showTime ? Math.min(Date.now() - showTime, DISPLAY_MS) : 0;
+function renderSlot(el, entry) {
+  if (!entry) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  const elapsed = Math.min(Date.now() - entry.showTime, entry.duration);
   // opacity:0 já está no CSS base → sem flash entre hidden→c-in
   el.classList.remove('c-in', 'c-out');
-  el.innerHTML = buildMsgHtml(msg, elapsed);
+  el.innerHTML = buildMsgHtml(entry.msg, elapsed, entry.duration);
   el.classList.remove('hidden');
   void el.offsetWidth; // reflow para reiniciar keyframe do zero
   el.classList.add('c-in');
@@ -221,14 +226,15 @@ function animOut(el, cb) {
 }
 
 const PLAT_LABEL = { tw:'TW', yt:'YT', ki:'KICK' };
-function buildMsgHtml({ p, user, uc, html }, elapsedMs = 0) {
+function buildMsgHtml({ p, user, uc, html }, elapsedMs = 0, duration = MAX_MS) {
   // animation-delay negativo avança a keyframe para o ponto correto do tempo
+  const dur   = (duration / 1000).toFixed(3);
   const delay = -(elapsedMs / 1000).toFixed(3);
   return `<div class="cmsg-top">` +
     `<span class="cbadge ${p}">${SVG[p]}${PLAT_LABEL[p]}</span>` +
     `<span class="cuser" style="color:${uc};text-shadow:0 1px 5px rgba(0,0,0,1),0 0 12px ${uc},0 0 20px ${uc}66">${esc(user)}</span>` +
     `</div><div class="ctext">${html}</div>` +
-    `<div class="slot-prog-wrap"><div class="slot-prog" style="animation-delay:${delay}s"></div></div>`;
+    `<div class="slot-prog-wrap"><div class="slot-prog" style="animation-duration:${dur}s;animation-delay:${delay}s"></div></div>`;
 }
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
