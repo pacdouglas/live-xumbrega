@@ -13,14 +13,14 @@ server.py (hub central)
 ├── Task: Twitch IRC WebSocket
 ├── Task: Kick Pusher WebSocket
 ├── Task: YouTube HTTP polling
-├── Task: Viewers poll (60s)
+├── Task: File watcher (hot-reload, 1s)
 ├── messages.jsonl  ← histórico NDJSON, zerado a cada start
-├── GET /events          → SSE ao vivo
+├── GET /events           → SSE ao vivo
 ├── GET /events?history=1 → SSE: histórico + ao vivo
-└── GET /*               → arquivos estáticos
+└── GET /*                → arquivos estáticos
 
-multichat.html  → EventSource('/events?history=1')
-overlay.html    → EventSource('/events')
+multichat.html → EventSource('/events?history=1')
+overlay.html   → EventSource('/events')
 ```
 
 Os HTMLs são consumidores SSE puros — sem conexão direta nas plataformas, sem Pusher JS, sem localStorage.
@@ -32,7 +32,7 @@ Os HTMLs são consumidores SSE puros — sem conexão direta nas plataformas, se
 | Arquivo | Descrição |
 |---|---|
 | `server.py` | Hub central — conecta nas 3 plataformas, distribui via SSE, salva histórico |
-| `xumbr3ga-multichat.html` | Painel de chat multi-plataforma (Twitch + Kick + YouTube + contador de viewers) |
+| `xumbrega_multichat.html` | Painel de chat multi-plataforma (Twitch + Kick + YouTube) |
 | `xumbrega_overlay_webcam.html` | Frame da webcam com chat FIFO integrado para o OBS |
 
 ---
@@ -61,10 +61,9 @@ Mantenha a janela aberta durante toda a live. O servidor zera o histórico a cad
 
 #### Chat completo
 
-- **URL:** `http://localhost:8080/xumbr3ga-multichat.html`
+- **URL:** `http://localhost:8080/xumbrega_multichat.html`
 - **Width:** `400` · **Height:** `1080`
 - Recebe histórico da sessão ao conectar + mensagens ao vivo
-- Exibe contador de viewers (atualizado a cada 60s)
 
 #### Overlay da webcam
 
@@ -79,10 +78,49 @@ Mantenha a janela aberta durante toda a live. O servidor zera o histórico a cad
 | Plataforma | Canal | Como conecta |
 |---|---|---|
 | **Twitch** | `xumbr3ga` | IRC WebSocket anônimo (automático) |
-| **Kick** | `xumbr3ga` | Pusher WebSocket nativo em Python (automático) |
+| **Kick** | `xumbr3ga` | Pusher WebSocket direto com chatroom ID fixo (automático) |
 | **YouTube** | — | HTTP polling da live chat (requer `--yt VIDEO_ID`) |
 
-> Para trocar os canais edite as constantes `TW_CH` e `KI_CH` no topo do `server.py`.
+> Para trocar os canais edite as constantes `TW_CH`, `KI_CH` e `KI_CHATROOM_ID` no topo do `server.py`.
+
+---
+
+## Reconexão automática
+
+Todos os loops de plataforma usam **exponential backoff** em caso de falha de rede:
+
+- Primeira tentativa falhou → aguarda 5s
+- Segunda falhou → 10s → 20s → 40s → máximo 60s
+- Ao conectar com sucesso, o backoff reseta para 5s
+
+Falhas temporárias de DNS (comuns no WSL2 ao trocar de rede) se recuperam automaticamente.
+
+---
+
+## Hot-reload
+
+O servidor monitora todos os `.html` da pasta a cada segundo. Se qualquer arquivo for salvo, todos os browsers/OBS conectados recarregam automaticamente — sem precisar clicar em Refresh no OBS.
+
+---
+
+## Chat overlay FIFO
+
+O overlay da webcam exibe mensagens com timing dinâmico baseado no tamanho da fila:
+
+| Mensagens na fila | Duração exibida |
+|---|---|
+| 0 | 4000ms (máximo) |
+| 1 | 2000ms |
+| 3 | 1000ms |
+| 7 | 500ms |
+| 13+ | 300ms (mínimo) |
+
+Isso cria o efeito de scroll rápido durante picos de chat (ex: galera spamando KKKK), sem travar em mensagens individuais quando o chat está calmo.
+
+- Máximo **2 mensagens** visíveis ao mesmo tempo
+- A barra de progresso de cada mensagem acompanha o timing real
+- Quando a primeira some, a segunda sobe mantendo o tempo restante
+- Suporte a emotes da Twitch, Kick e YouTube
 
 ---
 
@@ -90,21 +128,8 @@ Mantenha a janela aberta durante toda a live. O servidor zera o histórico a cad
 
 - Salvo em `messages.jsonl` (NDJSON, uma linha por mensagem)
 - Zerado automaticamente a cada `python server.py`
-- Apenas mensagens de chat são salvas (sys, status e viewers não)
+- Apenas mensagens de chat são salvas (sys e status não)
 - O multichat replaya o histórico ao conectar/reconectar
-
----
-
-## Chat overlay FIFO
-
-O overlay da webcam exibe as mensagens com a seguinte lógica:
-
-- Máximo **2 mensagens** visíveis ao mesmo tempo
-- Cada mensagem fica **4 segundos** na tela
-- Quando a primeira some, a segunda sobe mantendo o tempo restante
-- Nova mensagem ocupa o slot de baixo
-- Barra de progresso individual por mensagem
-- Suporte a emotes da Twitch, Kick e YouTube
 
 ---
 
