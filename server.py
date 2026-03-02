@@ -8,6 +8,7 @@ Browser Sources:
 """
 import asyncio
 import argparse
+import signal
 import json
 import html as html_lib
 import re
@@ -518,6 +519,8 @@ async def events_handler(request: web.Request) -> web.StreamResponse:
                 # Keepalive ping — detecta desconexão mesmo sem mensagens chegando
                 await resp.write(b': keepalive\n\n')
                 continue
+            if data is None:  # sentinel de shutdown
+                break
             await resp.write(data.encode())
     except (ConnectionResetError, asyncio.CancelledError, Exception):
         pass
@@ -599,16 +602,39 @@ async def main():
         asyncio.create_task(youtube_loop(video_id))
     asyncio.create_task(file_watcher_loop())
 
-    try:
-        await asyncio.Event().wait()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        await runner.cleanup()
+    stop = asyncio.Event()
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop.set)
+
+    await stop.wait()
+
+    # 1. Para de aceitar novas conexões
+    await site.stop()
+
+    # 2. Desconecta todos os clientes SSE via sentinel
+    for q in list(clients):
+        try:
+            q.put_nowait(None)
+        except asyncio.QueueFull:
+            pass
+
+    # 3. Aguarda os clientes saírem (até 2s)
+    for _ in range(40):
+        if not clients:
+            break
+        await asyncio.sleep(0.05)
+
+    # 4. Cancela tasks restantes (loops de plataforma, etc.)
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    for t in tasks:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+    # 5. Cleanup final
+    await runner.cleanup()
 
 
 if __name__ == '__main__':
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print('Servidor encerrado.')
+    asyncio.run(main())
+    print('Servidor encerrado.')
