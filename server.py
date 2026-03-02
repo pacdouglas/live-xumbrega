@@ -480,52 +480,6 @@ async def file_watcher_loop():
                 pass
 
 
-# ── Viewers polling loop ──────────────────────────────────────────────────────
-
-async def viewers_loop(video_id: str):
-    while True:
-        await asyncio.sleep(60)
-        tw_count = ki_count = yt_count = 0
-        try:
-            async with ClientSession() as session:
-                # Kick — viewer count indisponível sem bypass de Cloudflare
-                ki_count = 0
-
-                # YouTube
-                if video_id:
-                    try:
-                        async with session.post(
-                            'https://www.youtube.com/youtubei/v1/updated_metadata',
-                            json={
-                                'context': {
-                                    'client': {'clientName': 'WEB', 'clientVersion': '2.20240101.00.00'}
-                                },
-                                'videoId': video_id,
-                            },
-                            headers={'Content-Type': 'application/json'},
-                        ) as r:
-                            if r.ok:
-                                d = await r.json(content_type=None)
-                                vc = d.get('viewCount') or {}
-                                if isinstance(vc, dict):
-                                    vr = vc.get('videoViewCountRenderer') or {}
-                                    txt = (
-                                        (vr.get('viewCount') or vr.get('shortViewCount') or {})
-                                        .get('simpleText', '0')
-                                    )
-                                else:
-                                    txt = str(vc)
-                                yt_count = int(re.sub(r'[^\d]', '', txt) or 0)
-                    except Exception as e:
-                        print(f'[viewers/yt] {e}', flush=True)
-
-        except Exception as e:
-            print(f'[viewers] {e}', flush=True)
-
-        total = tw_count + ki_count + yt_count
-        print(f'[viewers] tw={tw_count} ki={ki_count} yt={yt_count} total={total}', flush=True)
-        broadcast({'p': 'viewers', 'tw': tw_count, 'yt': yt_count, 'ki': ki_count, 'total': total})
-
 
 # ── SSE endpoint ──────────────────────────────────────────────────────────────
 
@@ -639,7 +593,6 @@ async def main():
     asyncio.create_task(kick_loop())
     if video_id:
         asyncio.create_task(youtube_loop(video_id))
-    asyncio.create_task(viewers_loop(video_id))
     asyncio.create_task(file_watcher_loop())
 
     try:

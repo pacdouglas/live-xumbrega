@@ -268,7 +268,7 @@ window.addEventListener('load', () => {
   es.onmessage = ({ data }) => {
     const msg = JSON.parse(data);
     if (msg.p === 'reload')  { window.location.reload(); return; }
-    if (msg.p === 'status' || msg.p === 'sys' || msg.p === 'viewers') return;
+    if (msg.p === 'status' || msg.p === 'sys') return;
     addMsg(msg);
   };
 });

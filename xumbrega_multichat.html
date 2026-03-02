@@ -44,26 +44,6 @@ html,body{width:100%;height:100%;background:transparent;overflow:hidden;font-fam
 .pb.ki{background:#53fc18;color:#000;--g:rgba(83,252,24,0.7);}
 .pb svg{width:9px;height:9px;flex-shrink:0;}
 
-/* ── VIEWERS ── */
-#viewers{
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  padding:5px 12px;
-  background:rgba(168,85,247,0.12);
-  border:1px solid rgba(168,85,247,0.4);
-  border-radius:6px;
-  white-space:nowrap;
-  box-shadow:0 0 10px rgba(168,85,247,0.15);
-  line-height:1;gap:3px;
-}
-#viewers .vlabel{
-  font-family:'Orbitron',monospace;font-size:7px;font-weight:700;
-  color:rgba(192,132,252,0.7);letter-spacing:2px;
-}
-#viewer-count{
-  font-family:'Orbitron',monospace;font-size:15px;font-weight:900;
-  color:#fff;letter-spacing:1px;
-  text-shadow:0 0 12px rgba(192,132,252,0.8);
-}
 
 /* ── MESSAGES ── */
 #msgs{
@@ -117,10 +97,6 @@ html,body{width:100%;height:100%;background:transparent;overflow:hidden;font-fam
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 3h3v7l6.5-7H17l-7 7 7.5 11H14L8 13.5V21H4z"/></svg>
         KI
       </span>
-    </div>
-    <div id="viewers">
-      <span class="vlabel">👁 VIEWERS</span>
-      <span id="viewer-count">—</span>
     </div>
   </div>
   <div id="msgs"></div>
@@ -206,10 +182,6 @@ window.addEventListener('load', () => {
     if (msg.p === 'reload')  { window.location.reload(); return; }
     if (msg.p === 'status')  { setOn(msg.platform, msg.on); return; }
     if (msg.p === 'sys')     { sys(msg.text); return; }
-    if (msg.p === 'viewers') {
-      document.getElementById('viewer-count').textContent = msg.total.toLocaleString();
-      return;
-    }
     addMsg(msg);
   };
   es.onerror = () => sys('⚠️ Conexão com servidor perdida...');
