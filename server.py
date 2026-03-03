@@ -67,7 +67,7 @@ async def save_message(msg: dict):
         if _msg_count > HISTORY_LIMIT:
             await asyncio.to_thread(_trim_history, HISTORY_TRIM)
             _msg_count -= HISTORY_TRIM
-            print(f'[history] limite atingido — {HISTORY_TRIM} mensagens antigas removidas (total: {_msg_count})', flush=True)
+            log('hist', 'WARN', f'limite atingido — {HISTORY_TRIM} mensagens antigas removidas (total: {_msg_count})')
 
 
 def _append_line(line: str):
@@ -539,7 +539,7 @@ async def _yt_handle_action(action: dict):
         html = yt_parse_runs(msg.get('message', {}).get('runs') or [])
         if html.strip():
             chat_msg = {'p': 'yt', 'user': user, 'color': '', 'html': html}
-            print(f'[yt] {user}: {html[:60]}', flush=True)
+            log('yt', 'CHAT', f'{user}: {html[:80]}')
             broadcast(chat_msg)
             await save_message(chat_msg)
 
@@ -575,7 +575,7 @@ async def file_watcher_loop():
             try:
                 mtime = f.stat().st_mtime
                 if f in mtimes and mtimes[f] != mtime:
-                    print(f'[watcher] {f.name} modificado — recarregando clientes', flush=True)
+                    log('watch', 'INFO', f'{f.name} modificado — recarregando clientes')
                     broadcast({'p': 'reload'})
                 mtimes[f] = mtime
             except OSError:
@@ -626,7 +626,7 @@ async def events_handler(request: web.Request) -> web.StreamResponse:
 
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
     clients.add(q)
-    print(f'[sse] conectado — {client_id} | history={want_history} | total={len(clients)}', flush=True)
+    log('sse', 'INFO', f'conectado — {client_id} | history={want_history} | total={len(clients)}')
     try:
         while True:
             try:
@@ -642,7 +642,7 @@ async def events_handler(request: web.Request) -> web.StreamResponse:
         pass
     finally:
         clients.discard(q)
-        print(f'[sse] desconectado — {client_id} | total={len(clients)}', flush=True)
+        log('sse', 'INFO', f'desconectado — {client_id} | total={len(clients)}')
     return resp
 
 
@@ -703,7 +703,7 @@ def save_config(data: dict):
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f'[config] erro ao salvar: {e}', flush=True)
+        log('cfg', 'ERROR', f'erro ao salvar: {e}')
 
 
 # ── Startup dialog ─────────────────────────────────────────────────────────────
@@ -762,7 +762,7 @@ def ask_startup_config() -> dict | None:
 
         # ── YouTube ──
         yt_on = tk.BooleanVar(value=cfg.get('yt_on', False))
-        yt_id = tk.StringVar(value='')  # nunca persiste — muda a cada live
+        yt_id = tk.StringVar(value=cfg.get('yt_video_id', ''))
 
         yt_frame = tk.Frame(root)
         yt_frame.pack(fill='x', padx=16, pady=2)
@@ -829,6 +829,7 @@ def ask_startup_config() -> dict | None:
                 'ki_channel':     result[0]['ki_channel'],
                 'ki_chatroom_id': result[0]['ki_id'],
                 'yt_on':          has_yt,
+                'yt_video_id':    result[0]['yt'],
                 'port':           port,
             })
             root.destroy()
@@ -851,7 +852,7 @@ def ask_startup_config() -> dict | None:
         return result[0]
 
     except Exception as e:
-        print(f'[startup] dialog indisponível ({e}) — usando config salva ou padrões', flush=True)
+        log('start', 'WARN', f'dialog indisponível ({e}) — usando config salva ou padrões')
         cfg = load_config()
         return {
             'tw':         cfg.get('tw_on', True),
@@ -859,7 +860,7 @@ def ask_startup_config() -> dict | None:
             'ki':         cfg.get('ki_on', True),
             'ki_channel': cfg.get('ki_channel', 'xumbr3ga'),
             'ki_id':      cfg.get('ki_chatroom_id', '45573790'),
-            'yt':         '',
+            'yt':         cfg.get('yt_video_id', '') if cfg.get('yt_on', False) else '',
             'port':       cfg.get('port', 8080),
         }
 
