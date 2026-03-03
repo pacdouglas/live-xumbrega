@@ -13,8 +13,9 @@ import json
 import html as html_lib
 import re
 import mimetypes
+import datetime
 from pathlib import Path
-from aiohttp import web, ClientSession, WSMsgType
+from aiohttp import web, ClientSession, WSMsgType, ClientTimeout
 
 DIR = Path(__file__).parent
 TW_CH = 'xumbr3ga'
@@ -85,6 +86,12 @@ def _trim_history(n: int):
 def set_status(p: str, on: bool):
     platform_status[p] = on
     broadcast({'p': 'status', 'platform': p, 'on': on})
+
+
+def log(platform: str, level: str, msg: str):
+    """Log estruturado com timestamp. Níveis: INFO WARN ERROR CHAT."""
+    ts = datetime.datetime.now().strftime('%H:%M:%S')
+    print(f'{ts} [{platform}] {level} {msg}', flush=True)
 
 
 # ── Twitch emote rendering ────────────────────────────────────────────────────
@@ -173,12 +180,19 @@ def _tw_tags(line: str) -> dict:
 
 async def twitch_loop():
     from random import randint
+    attempt = 0
     backoff = 5
     while True:
+        attempt += 1
         connected = False
+        log('tw', 'INFO', f'conectando (tentativa #{attempt}) → wss://irc-ws.chat.twitch.tv')
         try:
-            async with ClientSession() as session:
-                async with session.ws_connect('wss://irc-ws.chat.twitch.tv:443') as ws:
+            conn_timeout = ClientTimeout(total=None, connect=15, sock_connect=15)
+            async with ClientSession(timeout=conn_timeout) as session:
+                async with session.ws_connect(
+                    'wss://irc-ws.chat.twitch.tv:443',
+                    heartbeat=30,  # WS ping automático; reconecta se sem pong em 30s
+                ) as ws:
                     await ws.send_str('CAP REQ :twitch.tv/tags twitch.tv/commands')
                     await ws.send_str(f'NICK justinfan{10000 + randint(0, 89999)}')
                     await ws.send_str(f'JOIN #{TW_CH}')
@@ -195,20 +209,20 @@ async def twitch_loop():
                                     backoff = 5
                                     set_status('tw', True)
                                     broadcast({'p': 'sys', 'text': f'🟣 Twitch conectado — #{TW_CH}'})
-                                    print(f'[tw] conectado — {TW_CH}', flush=True)
+                                    log('tw', 'INFO', f'conectado — #{TW_CH}')
                                 elif 'USERNOTICE' in line:
                                     tags = _tw_tags(line)
                                     u = tags.get('display-name') or 'Alguém'
                                     msg_id = tags.get('msg-id') or ''
                                     if msg_id in ('sub', 'resub'):
-                                        print(f'[tw] sub: {u}', flush=True)
+                                        log('tw', 'INFO', f'sub: {u}')
                                         broadcast({'p': 'sys', 'text': f'🟣 {u} assinou na Twitch!'})
                                     elif msg_id in ('subgift', 'anonsubgift'):
-                                        print(f'[tw] subgift: {u}', flush=True)
+                                        log('tw', 'INFO', f'subgift de {u}')
                                         broadcast({'p': 'sys', 'text': f'🟣 {u} deu um sub na Twitch!'})
                                     elif msg_id == 'raid':
                                         viewers = tags.get('msg-param-viewerCount', '?')
-                                        print(f'[tw] raid de {u} ({viewers} viewers)', flush=True)
+                                        log('tw', 'INFO', f'raid de {u} ({viewers} viewers)')
                                         broadcast({'p': 'sys', 'text': f'🟣 Raid de {u} — {viewers} viewers!'})
                                 elif 'PRIVMSG' in line:
                                     tags = _tw_tags(line)
@@ -218,51 +232,63 @@ async def twitch_loop():
                                     if m:
                                         rendered = tw_render(m.group(1), tags.get('emotes', ''))
                                         chat_msg = {'p': 'tw', 'user': user, 'color': color, 'html': rendered}
-                                        print(f'[tw] {user}: {m.group(1)[:60]}', flush=True)
+                                        log('tw', 'CHAT', f'{user}: {m.group(1)[:80]}')
                                         broadcast(chat_msg)
                                         await save_message(chat_msg)
                                 elif 'NOTICE' in line:
-                                    m = re.search(r'NOTICE \S+ :(.+)$', line)
-                                    if m:
-                                        print(f'[tw] notice: {m.group(1)}', flush=True)
+                                    m_notice = re.search(r'NOTICE \S+ :(.+)$', line)
+                                    if m_notice:
+                                        log('tw', 'WARN', f'notice: {m_notice.group(1)}')
                                 elif re.search(r' 40[36] ', line):
-                                    print(f'[tw] canal inválido ou inexistente: {TW_CH}', flush=True)
-                        elif msg.type in (WSMsgType.CLOSED, WSMsgType.ERROR):
+                                    log('tw', 'ERROR', f'canal inválido ou inexistente: {TW_CH}')
+                        elif msg.type == WSMsgType.ERROR:
+                            log('tw', 'WARN', f'erro no WebSocket: {ws.exception()}')
                             break
+                        elif msg.type == WSMsgType.CLOSED:
+                            log('tw', 'WARN', f'WebSocket fechado pelo servidor (código {ws.close_code})')
+                            break
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            print(f'[tw] erro: {e}', flush=True)
+            log('tw', 'ERROR', f'{type(e).__name__}: {e}')
         set_status('tw', False)
-        print(f'[tw] desconectado, reconectando em {backoff}s...', flush=True)
-        await asyncio.sleep(backoff)
         if not connected:
             backoff = min(backoff * 2, 60)
+        log('tw', 'WARN', f'desconectado — reconectando em {backoff}s...')
+        await asyncio.sleep(backoff)
 
 
 # ── Kick Pusher loop ──────────────────────────────────────────────────────────
 
 async def kick_loop():
+    attempt = 0
     backoff = 5
     while True:
+        attempt += 1
         connected = False
+        pusher_url = (
+            f'wss://ws-{PUSHER_CLUSTER}.pusher.com/app/{PUSHER_KEY}'
+            f'?protocol=7&client=py&version=7.6.0'
+        )
+        log('ki', 'INFO', f'conectando (tentativa #{attempt}) → ws-{PUSHER_CLUSTER}.pusher.com')
         try:
-            async with ClientSession() as session:
-                chatroom_id = KI_CHATROOM_ID
-
-                # Connect to Pusher WebSocket without the Pusher JS lib
-                url = (
-                    f'wss://ws-{PUSHER_CLUSTER}.pusher.com/app/{PUSHER_KEY}'
-                    f'?protocol=7&client=py&version=7.6.0'
-                )
-                async with session.ws_connect(url) as ws:
+            conn_timeout = ClientTimeout(total=None, connect=15, sock_connect=15)
+            async with ClientSession(timeout=conn_timeout) as session:
+                async with session.ws_connect(
+                    pusher_url,
+                    heartbeat=30,  # WS ping automático como backup ao pusher:ping
+                ) as ws:
                     async for msg in ws:
                         if msg.type == WSMsgType.TEXT:
                             event = json.loads(msg.data)
                             ename = event.get('event', '')
 
                             if ename == 'pusher:connection_established':
+                                sock_id = (json.loads(event.get('data') or '{}') or {}).get('socket_id', '?')
+                                log('ki', 'INFO', f'Pusher estabelecido (socket_id={sock_id}) — subscrevendo chatroom {KI_CHATROOM_ID}')
                                 sub = json.dumps({
                                     'event': 'pusher:subscribe',
-                                    'data': {'channel': f'chatrooms.{chatroom_id}.v2'}
+                                    'data': {'channel': f'chatrooms.{KI_CHATROOM_ID}.v2'}
                                 })
                                 await ws.send_str(sub)
 
@@ -271,13 +297,22 @@ async def kick_loop():
                                 backoff = 5
                                 set_status('ki', True)
                                 broadcast({'p': 'sys', 'text': f'🟢 Kick conectado — {KI_CH}'})
-                                print(f'[ki] conectado — {KI_CH}', flush=True)
+                                log('ki', 'INFO', f'conectado — {KI_CH} (chatroom {KI_CHATROOM_ID})')
 
                             elif ename == 'pusher:error':
                                 d = event.get('data') or {}
                                 if isinstance(d, str):
-                                    d = json.loads(d)
-                                print(f'[ki] erro Pusher: {d.get("message", d)}', flush=True)
+                                    try:
+                                        d = json.loads(d)
+                                    except Exception:
+                                        pass
+                                code = d.get('code') if isinstance(d, dict) else None
+                                errmsg = d.get('message', d) if isinstance(d, dict) else d
+                                if code and 4000 <= int(code) < 4100:
+                                    # Erros de aplicação Pusher (chave inválida, etc.) — log proeminente
+                                    log('ki', 'ERROR', f'Pusher erro fatal (código {code}): {errmsg}')
+                                else:
+                                    log('ki', 'WARN', f'Pusher erro (código {code}): {errmsg}')
 
                             elif ename == 'pusher:ping':
                                 await ws.send_str(json.dumps({'event': 'pusher:pong', 'data': {}}))
@@ -292,7 +327,7 @@ async def kick_loop():
                                 text = d.get('content') or ''
                                 if text:
                                     chat_msg = {'p': 'ki', 'user': user, 'color': color, 'html': ki_render(text)}
-                                    print(f'[ki] {user}: {text[:60]}', flush=True)
+                                    log('ki', 'CHAT', f'{user}: {text[:80]}')
                                     broadcast(chat_msg)
                                     await save_message(chat_msg)
 
@@ -301,7 +336,7 @@ async def kick_loop():
                                 if isinstance(d, str):
                                     d = json.loads(d)
                                 who = (d or {}).get('username', 'Alguém')
-                                print(f'[ki] sub: {who}', flush=True)
+                                log('ki', 'INFO', f'sub: {who}')
                                 broadcast({'p': 'sys', 'text': f'🟢 {who} assinou no Kick!'})
 
                             elif ename == 'App\\Events\\GiftedSubscriptionsEvent':
@@ -311,18 +346,25 @@ async def kick_loop():
                                 d = d or {}
                                 gifted_by = d.get('gifted_by') or 'Alguém'
                                 count = len(d.get('gifted_usernames') or []) or 1
+                                log('ki', 'INFO', f'gifted subs: {gifted_by} → {count} sub(s)')
                                 broadcast({'p': 'sys', 'text': f'🟢 {gifted_by} deu {count} sub(s) no Kick!'})
 
-                        elif msg.type in (WSMsgType.CLOSED, WSMsgType.ERROR):
+                        elif msg.type == WSMsgType.ERROR:
+                            log('ki', 'WARN', f'erro no WebSocket: {ws.exception()}')
+                            break
+                        elif msg.type == WSMsgType.CLOSED:
+                            log('ki', 'WARN', f'WebSocket fechado pelo servidor (código {ws.close_code})')
                             break
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            print(f'[ki] erro: {e}', flush=True)
+            log('ki', 'ERROR', f'{type(e).__name__}: {e}')
         set_status('ki', False)
-        print(f'[ki] desconectado, reconectando em {backoff}s...', flush=True)
-        await asyncio.sleep(backoff)
         if not connected:
             backoff = min(backoff * 2, 60)
+        log('ki', 'WARN', f'desconectado — reconectando em {backoff}s...')
+        await asyncio.sleep(backoff)
 
 
 # ── YouTube polling loop ──────────────────────────────────────────────────────
@@ -339,93 +381,137 @@ async def youtube_loop(video_id: str):
         'Accept-Language': 'en-US,en;q=0.9',
         'Cookie': 'CONSENT=YES+1; SOCS=CAESEwgDEgk1NzM4MTkzMjYaAmVuIAE=',
     }
-
-    # Extract initial continuation token
-    continuation = None
-    err_backoff = 5
-    while not continuation:
-        try:
-            async with ClientSession() as session:
-                async with session.get(
-                    f'https://www.youtube.com/live_chat?v={video_id}&is_popout=1',
-                    headers=YT_HEADERS
-                ) as r:
-                    if not r.ok:
-                        raise Exception(f'HTTP {r.status}')
-                    html = await r.text()
-                    continuation = _yt_extract_token(html)
-                    if not continuation:
-                        raise Exception('continuation token não encontrado')
-        except Exception as e:
-            print(f'[yt] connect error: {e} — tentando em {err_backoff}s', flush=True)
-            await asyncio.sleep(err_backoff)
-            err_backoff = min(err_backoff * 2, 60)
-
-    set_status('yt', True)
-    broadcast({'p': 'sys', 'text': '🔴 YouTube conectado!'})
-    print(f'[yt] conectado — video_id={video_id}', flush=True)
-
-    is_first = True
-    backoff = 0
-    err_backoff = 5
+    req_timeout = ClientTimeout(total=30)
+    attempt = 0
+    outer_backoff = 5
 
     while True:
+        attempt += 1
+        log('yt', 'INFO', f'iniciando (tentativa #{attempt}) — v={video_id}')
+
         try:
+            # Uma session por ciclo de conexão — reutilizada entre token e polls
             async with ClientSession() as session:
-                async with session.post(
-                    'https://www.youtube.com/youtubei/v1/live_chat/get_live_chat',
-                    json={
-                        'context': {
-                            'client': {'clientName': 'WEB', 'clientVersion': '2.20240101.00.00', 'hl': 'en'}
-                        },
-                        'continuation': continuation,
-                    },
-                    headers={'Content-Type': 'application/json'},
-                ) as resp:
-                    if resp.status == 429:
-                        backoff = min((backoff or 10000) * 2, 60000)
-                        print(f'[yt] 429 rate limit — backoff {backoff/1000}s', flush=True)
-                        await asyncio.sleep(backoff / 1000)
+
+                # ── Fase 1: obter token de continuação ────────────────────────────
+                continuation = None
+                token_backoff = 5
+                while not continuation:
+                    try:
+                        async with session.get(
+                            f'https://www.youtube.com/live_chat?v={video_id}&is_popout=1',
+                            headers=YT_HEADERS,
+                            timeout=req_timeout,
+                        ) as r:
+                            if r.status == 404:
+                                log('yt', 'ERROR', 'HTTP 404 — live não existe ou encerrou permanentemente')
+                                set_status('yt', False)
+                                return
+                            if not r.ok:
+                                raise Exception(f'HTTP {r.status}')
+                            html = await r.text()
+                            continuation = _yt_extract_token(html)
+                            if not continuation:
+                                raise Exception('token de continuação não encontrado na página')
+                            log('yt', 'INFO', f'token obtido: {continuation[:24]}...')
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        log('yt', 'ERROR', f'erro ao buscar token: {type(e).__name__}: {e} — tentando em {token_backoff}s')
+                        await asyncio.sleep(token_backoff)
+                        token_backoff = min(token_backoff * 2, 60)
+
+                set_status('yt', True)
+                broadcast({'p': 'sys', 'text': '🔴 YouTube conectado!'})
+                log('yt', 'INFO', f'conectado — iniciando polling (v={video_id})')
+
+                # ── Fase 2: polling de mensagens ──────────────────────────────────
+                is_first = True
+                rate_backoff = 0
+                err_backoff = 5
+
+                while True:
+                    try:
+                        async with session.post(
+                            'https://www.youtube.com/youtubei/v1/live_chat/get_live_chat',
+                            json={
+                                'context': {
+                                    'client': {
+                                        'clientName': 'WEB',
+                                        'clientVersion': '2.20240101.00.00',
+                                        'hl': 'en',
+                                    }
+                                },
+                                'continuation': continuation,
+                            },
+                            headers={'Content-Type': 'application/json'},
+                            timeout=req_timeout,
+                        ) as resp:
+                            if resp.status == 429:
+                                rate_backoff = min((rate_backoff or 10) * 2, 120)
+                                log('yt', 'WARN', f'429 rate-limit — aguardando {rate_backoff}s')
+                                await asyncio.sleep(rate_backoff)
+                                continue
+                            if resp.status == 404:
+                                log('yt', 'INFO', 'poll 404 — live encerrada')
+                                set_status('yt', False)
+                                broadcast({'p': 'sys', 'text': '🔴 YouTube: live encerrada.'})
+                                return
+                            if not resp.ok:
+                                raise Exception(f'HTTP {resp.status}')
+                            data = await resp.json(content_type=None)
+
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        if re.search(r'encerrada|ended|not.?found', str(e), re.I):
+                            log('yt', 'INFO', f'live encerrada ({e})')
+                            set_status('yt', False)
+                            broadcast({'p': 'sys', 'text': '🔴 YouTube: live encerrada.'})
+                            return
+                        log('yt', 'ERROR', f'{type(e).__name__}: {e} — tentando em {err_backoff}s')
+                        await asyncio.sleep(err_backoff)
+                        err_backoff = min(err_backoff * 2, 60)
                         continue
-                    if not resp.ok:
-                        raise Exception(f'HTTP {resp.status}')
-                    data = await resp.json(content_type=None)
 
-            lcc = (data.get('continuationContents') or {}).get('liveChatContinuation')
-            if not lcc:
-                raise Exception('liveChatContinuation ausente')
+                    lcc = (data.get('continuationContents') or {}).get('liveChatContinuation')
+                    if not lcc:
+                        # YouTube parou de retornar continuação — reconecta do zero
+                        log('yt', 'WARN', 'liveChatContinuation ausente — reconectando do zero')
+                        break  # sai do loop de poll; outer loop re-busca o token
 
-            nc = ((lcc.get('continuations') or [{}]))[0]
-            tok = (
-                (nc.get('timedContinuationData') or {}).get('continuation')
-                or (nc.get('invalidationContinuationData') or {}).get('continuation')
-                or (nc.get('reloadContinuationData') or {}).get('continuation')
-            )
-            if tok:
-                continuation = tok
+                    nc = ((lcc.get('continuations') or [{}]))[0]
+                    tok = (
+                        (nc.get('timedContinuationData') or {}).get('continuation')
+                        or (nc.get('invalidationContinuationData') or {}).get('continuation')
+                        or (nc.get('reloadContinuationData') or {}).get('continuation')
+                    )
+                    if tok:
+                        continuation = tok
 
-            poll_ms = (
-                (nc.get('timedContinuationData') or {}).get('timeoutMs')
-                or (nc.get('invalidationContinuationData') or {}).get('timeoutMs')
-                or 5000
-            )
+                    poll_ms = (
+                        (nc.get('timedContinuationData') or {}).get('timeoutMs')
+                        or (nc.get('invalidationContinuationData') or {}).get('timeoutMs')
+                        or 5000
+                    )
 
-            if not is_first:
-                for action in lcc.get('actions') or []:
-                    await _yt_handle_action(action)
-            is_first = False
-            backoff = 0
-            err_backoff = 5
-            await asyncio.sleep(min(poll_ms, 2000) / 1000)
+                    if not is_first:
+                        for action in lcc.get('actions') or []:
+                            await _yt_handle_action(action)
+                    is_first = False
+                    rate_backoff = 0
+                    err_backoff = 5
+                    await asyncio.sleep(min(poll_ms, 2000) / 1000)
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            if re.search(r'404|ended|not.*found', str(e), re.I):
-                set_status('yt', False)
-                broadcast({'p': 'sys', 'text': '🔴 YouTube: live encerrada.'})
-                return
-            print(f'[yt] poll error: {e} — tentando em {err_backoff}s', flush=True)
-            await asyncio.sleep(err_backoff)
-            err_backoff = min(err_backoff * 2, 60)
+            log('yt', 'ERROR', f'erro inesperado: {type(e).__name__}: {e}')
+
+        set_status('yt', False)
+        log('yt', 'WARN', f'desconectado — reconectando em {outer_backoff}s...')
+        await asyncio.sleep(outer_backoff)
+        outer_backoff = min(outer_backoff * 2, 60)
 
 
 def _yt_extract_token(html: str) -> str:
