@@ -55,6 +55,13 @@ def broadcast(msg: dict):
             dead.add(q)
     for q in dead:
         clients.discard(q)
+        # Sinaliza ao handler para fechar a conexão — força reconexão automática do browser
+        try:
+            while not q.empty():
+                q.get_nowait()
+            q.put_nowait(None)
+        except Exception:
+            pass
 
 
 async def save_message(msg: dict):
