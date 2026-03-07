@@ -264,8 +264,6 @@ function boostColor(hex) {
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 window.addEventListener('load', () => {
-  setTimeout(() => window.location.reload(), 5 * 60 * 1000);
-
   const es = new EventSource('/events');  // sem history — só ao vivo
   es.onmessage = ({ data }) => {
     const msg = JSON.parse(data);

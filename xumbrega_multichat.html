@@ -176,8 +176,6 @@ function push(el) {
 }
 
 window.addEventListener('load', () => {
-  setTimeout(() => window.location.reload(), 5 * 60 * 1000);
-
   const es = new EventSource('/events?history=1');
   es.onmessage = ({ data }) => {
     const msg = JSON.parse(data);
